@@ -313,22 +313,14 @@ function sma(arr, period, idx) {
   return s / period;
 }
 
-// Linear regression slope over the last `window` SMA values
-// Returns annualized % slope (assumes 252 trading days)
-function smaSlope(smaArr, idx, window = 20) {
-  const start = idx - window + 1;
-  if (start < 0 || smaArr[start] == null) return null;
-  let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0, n = 0;
-  for (let i = 0; i < window; i++) {
-    const x = i;
-    const y = smaArr[start + i];
-    if (y == null) return null;
-    sumX += x; sumY += y; sumXY += x * y; sumXX += x * x; n++;
-  }
-  const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
-  // Slope is price units per day; normalize to % of current SMA value, annualized
-  const refSMA = smaArr[idx];
-  return (slope / refSMA) * 252;
+// Backward finite difference over `window` days of the SMA series.
+// Returns annualized % rate of change at `idx`.
+function smaSlope(smaArr, idx, window = 5) {
+  const prev = smaArr[idx - window];
+  const curr = smaArr[idx];
+  if (prev == null || curr == null) return null;
+  const perDay = (curr - prev) / window;
+  return (perDay / curr) * 252;
 }
 
 function computeSignal(price, sma200, sma50, slope200Ann) {
@@ -348,7 +340,7 @@ function buildStateSeries(data) {
   const closes = data.map(d => d.close);
   const sma200Arr = closes.map((_, i) => sma(closes, 200, i));
   const sma50Arr = closes.map((_, i) => sma(closes, 50, i));
-  const slopeArr = closes.map((_, i) => smaSlope(sma200Arr, i, 20));
+  const slopeArr = closes.map((_, i) => smaSlope(sma200Arr, i, 5));
   const states = closes.map((c, i) => {
     const sig = computeSignal(c, sma200Arr[i], sma50Arr[i], slopeArr[i]);
     return sig ? sig.state : null;
