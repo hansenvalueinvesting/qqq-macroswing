@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QQQ Trend Signal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --panel: #111111;
+    --border: #1f1f1f;
+    --text: #e8e6e1;
+    --muted: #6b6862;
+    --dim: #3a3835;
+    --green: #5fb878;
+    --red: #d65a5a;
+    --gray: #8a8680;
+    --accent: #d4a04a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+  body {
+    padding: 24px;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 16px;
+    margin-bottom: 24px;
+  }
+  .header-left h1 {
+    font-family: 'Fraunces', serif;
+    font-weight: 300;
+    font-size: 28px;
+    letter-spacing: -0.02em;
+    color: var(--text);
+  }
+  .header-left .sub {
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    margin-top: 4px;
+  }
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .price-block { text-align: right; }
+  .price-block .price {
+    font-family: 'Fraunces', serif;
+    font-size: 24px;
+    font-weight: 500;
+  }
+  .price-block .change { font-size: 12px; }
+  .change.up { color: var(--green); }
+  .change.down { color: var(--red); }
+  .refresh-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 14px;
+    font-family: inherit;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .refresh-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .timestamp { font-size: 10px; color: var(--muted); }
+
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin-bottom: 20px;
+  }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    padding: 20px;
+  }
+  .panel-title {
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.2em;
+    margin-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 10px;
+  }
+
+  /* Signal Panel */
+  .signal-state {
+    font-family: 'Fraunces', serif;
+    font-size: 56px;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    line-height: 1;
+    margin: 8px 0 12px;
+  }
+  .signal-state.tqqq { color: var(--green); }
+  .signal-state.sgov { color: var(--gray); }
+  .signal-state.sqqq { color: var(--red); }
+  .signal-reason {
+    font-size: 12px;
+    color: var(--text);
+    margin-bottom: 20px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .signal-meta {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  .signal-meta .label {
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+  }
+  .signal-meta .value {
+    font-size: 16px;
+    color: var(--text);
+    margin-top: 4px;
+    font-family: 'Fraunces', serif;
+    font-weight: 500;
+  }
+
+  /* Metrics Table */
+  .metrics-row {
+    display: grid;
+    grid-template-columns: 1.5fr 1fr 1fr auto;
+    gap: 12px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+    align-items: center;
+    font-size: 12px;
+  }
+  .metrics-row:last-child { border-bottom: none; }
+  .metrics-row .label { color: var(--muted); }
+  .metrics-row .val { font-weight: 500; }
+  .metrics-row .delta { color: var(--muted); font-size: 11px; }
+  .check {
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .check.yes { color: var(--green); }
+  .check.no { color: var(--red); }
+
+  /* Chart Panel */
+  .chart-panel {
+    grid-column: 1 / -1;
+    padding: 20px;
+  }
+  .chart-wrap {
+    position: relative;
+    height: 380px;
+  }
+
+  /* Signal Log */
+  .log-panel { grid-column: 1 / -1; }
+  .log-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  .log-table th, .log-table td {
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .log-table th {
+    color: var(--muted);
+    font-weight: 400;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+  }
+  .log-table .pill {
+    display: inline-block;
+    padding: 2px 8px;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  .pill.tqqq { color: var(--green); border: 1px solid var(--green); }
+  .pill.sgov { color: var(--gray); border: 1px solid var(--gray); }
+  .pill.sqqq { color: var(--red); border: 1px solid var(--red); }
+
+  .loading, .error {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--muted);
+  }
+  .error { color: var(--red); }
+  .spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-right: 8px;
+    vertical-align: middle;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .footer {
+    margin-top: 32px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    font-size: 10px;
+    color: var(--muted);
+    text-align: center;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <h1>QQQ Trend Signal</h1>
+    <div class="sub">Daily regime-gated leveraged ETF strategy</div>
+  </div>
+  <div class="header-right">
+    <div class="price-block">
+      <div class="price" id="qqq-price">—</div>
+      <div class="change" id="qqq-change">—</div>
+    </div>
+    <button class="refresh-btn" onclick="refresh()">Refresh</button>
+  </div>
+</div>
+
+<div id="content">
+  <div class="loading"><span class="spinner"></span>Loading QQQ data…</div>
+</div>
+
+<div class="footer">
+  <span id="timestamp">—</span> · Yahoo Finance · Not investment advice
+</div>
+
+<script>
+const CACHE_KEY = 'qqq-trend-signal-cache';
+const CACHE_TTL = 4 * 60 * 60 * 1000; // 4 hours
+const SLOPE_DEAD_ZONE_ANN = 0.05; // ±5% annualized
+
+// State colors for chart shading
+const STATE_COLORS = {
+  TQQQ: 'rgba(95, 184, 120, 0.08)',
+  SGOV: 'rgba(138, 134, 128, 0.06)',
+  SQQQ: 'rgba(214, 90, 90, 0.08)'
+};
+
+async function fetchQQQ(force = false) {
+  if (!force) {
+    const cached = localStorage.getItem(CACHE_KEY);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (Date.now() - parsed.ts < CACHE_TTL) return parsed.data;
+    }
+  }
+  const url = 'https://query1.finance.yahoo.com/v8/finance/chart/QQQ?range=2y&interval=1d';
+  // Use a CORS proxy since Yahoo doesn't send CORS headers for browser requests
+  const proxied = 'https://corsproxy.io/?' + encodeURIComponent(url);
+  const res = await fetch(proxied);
+  if (!res.ok) throw new Error('Yahoo fetch failed: ' + res.status);
+  const json = await res.json();
+  const result = json.chart.result[0];
+  const timestamps = result.timestamp;
+  const closes = result.indicators.quote[0].close;
+  const data = timestamps.map((t, i) => ({
+    date: new Date(t * 1000),
+    close: closes[i]
+  })).filter(d => d.close != null);
+  localStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), data: data.map(d => ({ date: d.date.toISOString(), close: d.close })) }));
+  return data.map(d => ({ date: typeof d.date === 'string' ? new Date(d.date) : d.date, close: d.close }));
+}
+
+function sma(arr, period, idx) {
+  if (idx < period - 1) return null;
+  let s = 0;
+  for (let i = idx - period + 1; i <= idx; i++) s += arr[i];
+  return s / period;
+}
+
+// Linear regression slope over the last `window` SMA values
+// Returns annualized % slope (assumes 252 trading days)
+function smaSlope(smaArr, idx, window = 20) {
+  const start = idx - window + 1;
+  if (start < 0 || smaArr[start] == null) return null;
+  let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0, n = 0;
+  for (let i = 0; i < window; i++) {
+    const x = i;
+    const y = smaArr[start + i];
+    if (y == null) return null;
+    sumX += x; sumY += y; sumXY += x * y; sumXX += x * x; n++;
+  }
+  const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+  // Slope is price units per day; normalize to % of current SMA value, annualized
+  const refSMA = smaArr[idx];
+  return (slope / refSMA) * 252;
+}
+
+function computeSignal(price, sma200, sma50, slope200Ann) {
+  if (sma200 == null || sma50 == null || slope200Ann == null) return null;
+  const aboveSMA200 = price > sma200;
+  const sma50Up = sma50 > sma200; // proxy for 50-day sloping up relative to 200
+  if (aboveSMA200 && sma50Up) {
+    return { state: 'TQQQ', reason: `QQQ ${((price/sma200 - 1)*100).toFixed(1)}% above 200-SMA, 50-SMA above 200-SMA, slope ${(slope200Ann*100).toFixed(1)}% ann.` };
+  }
+  if (!aboveSMA200 && slope200Ann < -SLOPE_DEAD_ZONE_ANN) {
+    return { state: 'SQQQ', reason: `QQQ ${((price/sma200 - 1)*100).toFixed(1)}% below 200-SMA, slope ${(slope200Ann*100).toFixed(1)}% ann. (confirmed downtrend).` };
+  }
+  return { state: 'SGOV', reason: `QQQ ${((price/sma200 - 1)*100).toFixed(1)}% vs 200-SMA, slope ${(slope200Ann*100).toFixed(1)}% ann. (no confirmed trend).` };
+}
+
+function buildStateSeries(data) {
+  const closes = data.map(d => d.close);
+  const sma200Arr = closes.map((_, i) => sma(closes, 200, i));
+  const sma50Arr = closes.map((_, i) => sma(closes, 50, i));
+  const slopeArr = closes.map((_, i) => smaSlope(sma200Arr, i, 20));
+  const states = closes.map((c, i) => {
+    const sig = computeSignal(c, sma200Arr[i], sma50Arr[i], slopeArr[i]);
+    return sig ? sig.state : null;
+  });
+  return { sma200Arr, sma50Arr, slopeArr, states };
+}
+
+function findTransitions(data, states) {
+  const transitions = [];
+  let lastState = null;
+  let lastIdx = null;
+  for (let i = 0; i < states.length; i++) {
+    if (states[i] == null) continue;
+    if (states[i] !== lastState) {
+      if (lastState != null) {
+        transitions.push({
+          fromIdx: lastIdx,
+          toIdx: i,
+          from: lastState,
+          to: states[i],
+          date: data[i].date,
+          price: data[i].close,
+          durationDays: i - lastIdx
+        });
+      }
+      lastState = states[i];
+      lastIdx = i;
+    }
+  }
+  // Current state info
+  const currentStart = lastIdx;
+  return { transitions, currentStart };
+}
+
+function fmtDate(d) {
+  return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+}
+function fmtNum(n, dp = 2) {
+  if (n == null || isNaN(n)) return '—';
+  return n.toFixed(dp);
+}
+function fmtPct(n, dp = 2) {
+  if (n == null || isNaN(n)) return '—';
+  const sign = n >= 0 ? '+' : '';
+  return sign + (n * 100).toFixed(dp) + '%';
+}
+
+let chartInstance = null;
+
+function render(data) {
+  const closes = data.map(d => d.close);
+  const last = data.length - 1;
+  const { sma200Arr, sma50Arr, slopeArr, states } = buildStateSeries(data);
+  const { transitions, currentStart } = findTransitions(data, states);
+
+  const price = closes[last];
+  const prevPrice = closes[last - 1];
+  const dayChange = (price / prevPrice - 1);
+  const sma200 = sma200Arr[last];
+  const sma50 = sma50Arr[last];
+  const slope = slopeArr[last];
+  const sig = computeSignal(price, sma200, sma50, slope);
+
+  // Header price
+  document.getElementById('qqq-price').textContent = '$' + fmtNum(price, 2);
+  const chEl = document.getElementById('qqq-change');
+  chEl.textContent = fmtPct(dayChange);
+  chEl.className = 'change ' + (dayChange >= 0 ? 'up' : 'down');
+
+  // Current state metadata
+  const daysInState = last - currentStart;
+  const lastFlip = transitions.length > 0 ? transitions[transitions.length - 1] : null;
+
+  // Conditions
+  const cond_above_200 = price > sma200;
+  const cond_50_above_200 = sma50 > sma200;
+  const cond_slope_negative = slope < -SLOPE_DEAD_ZONE_ANN;
+
+  const content = `
+    <div class="grid">
+      <div class="panel">
+        <div class="panel-title">Current Signal</div>
+        <div class="signal-state ${sig.state.toLowerCase()}">HOLD ${sig.state}</div>
+        <div class="signal-reason">${sig.reason}</div>
+        <div class="signal-meta">
+          <div>
+            <div class="label">Days in state</div>
+            <div class="value">${daysInState}</div>
+          </div>
+          <div>
+            <div class="label">Last flip</div>
+            <div class="value">${lastFlip ? fmtDate(lastFlip.date) : '—'}</div>
+          </div>
+          <div>
+            <div class="label">Flip price</div>
+            <div class="value">${lastFlip ? '$' + fmtNum(lastFlip.price) : '—'}</div>
+          </div>
+          <div>
+            <div class="label">Prior state</div>
+            <div class="value">${lastFlip ? lastFlip.from : '—'}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">Metrics</div>
+        <div class="metrics-row">
+          <div class="label">QQQ Close</div>
+          <div class="val">$${fmtNum(price)}</div>
+          <div class="delta">${fmtPct(dayChange)} today</div>
+          <div></div>
+        </div>
+        <div class="metrics-row">
+          <div class="label">200-day SMA</div>
+          <div class="val">$${fmtNum(sma200)}</div>
+          <div class="delta">${fmtPct(price/sma200 - 1)}</div>
+          <div class="check ${cond_above_200 ? 'yes' : 'no'}">${cond_above_200 ? '✓' : '✗'}</div>
+        </div>
+        <div class="metrics-row">
+          <div class="label">50-day SMA</div>
+          <div class="val">$${fmtNum(sma50)}</div>
+          <div class="delta">${fmtPct(price/sma50 - 1)}</div>
+          <div class="check ${cond_50_above_200 ? 'yes' : 'no'}">${cond_50_above_200 ? '✓' : '✗'}</div>
+        </div>
+        <div class="metrics-row">
+          <div class="label">200-SMA slope (20d, ann.)</div>
+          <div class="val">${fmtPct(slope)}</div>
+          <div class="delta">${Math.abs(slope) < SLOPE_DEAD_ZONE_ANN ? 'flat' : (slope > 0 ? 'rising' : 'falling')}</div>
+          <div class="check ${cond_slope_negative ? 'no' : 'yes'}">${cond_slope_negative ? '↓' : '↑'}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel chart-panel">
+      <div class="panel-title">QQQ · 2-year price + SMAs (shaded by historical signal state)</div>
+      <div class="chart-wrap"><canvas id="chart"></canvas></div>
+    </div>
+
+    <div class="panel log-panel">
+      <div class="panel-title">Signal flip history</div>
+      <table class="log-table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>From</th>
+            <th>→</th>
+            <th>To</th>
+            <th>QQQ Price</th>
+            <th>Prior state duration</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${transitions.slice().reverse().map(t => `
+            <tr>
+              <td>${fmtDate(t.date)}</td>
+              <td><span class="pill ${t.from.toLowerCase()}">${t.from}</span></td>
+              <td style="color: var(--muted)">→</td>
+              <td><span class="pill ${t.to.toLowerCase()}">${t.to}</span></td>
+              <td>$${fmtNum(t.price)}</td>
+              <td>${t.durationDays} days</td>
+            </tr>
+          `).join('') || '<tr><td colspan="6" style="color: var(--muted); text-align: center; padding: 20px;">No state transitions in window.</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+  `;
+  document.getElementById('content').innerHTML = content;
+
+  // Update timestamp
+  document.getElementById('timestamp').textContent = 'Last updated ' + new Date().toLocaleString();
+
+  // Build chart
+  drawChart(data, sma200Arr, sma50Arr, states, transitions);
+}
+
+function drawChart(data, sma200Arr, sma50Arr, states, transitions) {
+  const ctx = document.getElementById('chart').getContext('2d');
+  if (chartInstance) chartInstance.destroy();
+
+  const labels = data.map(d => d.date);
+  const closes = data.map(d => d.close);
+
+  // Build shading segments: { fromIdx, toIdx, state }
+  const segments = [];
+  let segStart = null, segState = null;
+  for (let i = 0; i < states.length; i++) {
+    if (states[i] == null) continue;
+    if (states[i] !== segState) {
+      if (segState != null) segments.push({ from: segStart, to: i - 1, state: segState });
+      segState = states[i];
+      segStart = i;
+    }
+  }
+  if (segState != null) segments.push({ from: segStart, to: states.length - 1, state: segState });
+
+  // Background shading plugin
+  const shadingPlugin = {
+    id: 'shading',
+    beforeDatasetsDraw(chart) {
+      const { ctx, chartArea, scales } = chart;
+      if (!chartArea) return;
+      segments.forEach(seg => {
+        const xStart = scales.x.getPixelForValue(labels[seg.from]);
+        const xEnd = scales.x.getPixelForValue(labels[seg.to]);
+        ctx.save();
+        ctx.fillStyle = STATE_COLORS[seg.state];
+        ctx.fillRect(xStart, chartArea.top, xEnd - xStart, chartArea.bottom - chartArea.top);
+        ctx.restore();
+      });
+    }
+  };
+
+  // Flip markers as scatter dataset
+  const flipPoints = transitions.map(t => ({
+    x: data[t.toIdx].date,
+    y: data[t.toIdx].close,
+    state: t.to
+  }));
+
+  chartInstance = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [
+        {
+          label: 'QQQ',
+          data: closes,
+          borderColor: '#e8e6e1',
+          backgroundColor: 'transparent',
+          borderWidth: 1.5,
+          pointRadius: 0,
+          tension: 0
+        },
+        {
+          label: '200 SMA',
+          data: sma200Arr,
+          borderColor: '#d4a04a',
+          backgroundColor: 'transparent',
+          borderWidth: 1,
+          borderDash: [4, 4],
+          pointRadius: 0,
+          tension: 0
+        },
+        {
+          label: '50 SMA',
+          data: sma50Arr,
+          borderColor: '#6b6862',
+          backgroundColor: 'transparent',
+          borderWidth: 1,
+          pointRadius: 0,
+          tension: 0
+        },
+        {
+          label: 'Flips',
+          type: 'scatter',
+          data: flipPoints,
+          backgroundColor: flipPoints.map(p => p.state === 'TQQQ' ? '#5fb878' : (p.state === 'SQQQ' ? '#d65a5a' : '#8a8680')),
+          borderColor: '#0a0a0a',
+          borderWidth: 1,
+          pointRadius: 5,
+          pointHoverRadius: 7,
+          showLine: false
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: {
+          labels: { color: '#8a8680', font: { family: 'JetBrains Mono', size: 10 }, boxWidth: 18, boxHeight: 2 },
+          position: 'top',
+          align: 'end'
+        },
+        tooltip: {
+          backgroundColor: '#111',
+          borderColor: '#1f1f1f',
+          borderWidth: 1,
+          titleColor: '#e8e6e1',
+          bodyColor: '#e8e6e1',
+          titleFont: { family: 'JetBrains Mono', size: 11 },
+          bodyFont: { family: 'JetBrains Mono', size: 11 },
+          callbacks: {
+            title: (items) => fmtDate(new Date(items[0].parsed.x)),
+            label: (item) => item.dataset.label + ': $' + item.parsed.y.toFixed(2)
+          }
+        }
+      },
+      scales: {
+        x: {
+          type: 'time',
+          time: { unit: 'month', displayFormats: { month: 'MMM yy' } },
+          grid: { color: '#1f1f1f', drawTicks: false },
+          ticks: { color: '#6b6862', font: { family: 'JetBrains Mono', size: 10 }, maxRotation: 0 }
+        },
+        y: {
+          grid: { color: '#1f1f1f', drawTicks: false },
+          ticks: { color: '#6b6862', font: { family: 'JetBrains Mono', size: 10 }, callback: v => '$' + v }
+        }
+      }
+    },
+    plugins: [shadingPlugin]
+  });
+}
+
+async function refresh(force = true) {
+  document.getElementById('content').innerHTML = '<div class="loading"><span class="spinner"></span>Loading QQQ data…</div>';
+  try {
+    const data = await fetchQQQ(force);
+    render(data);
+  } catch (e) {
+    document.getElementById('content').innerHTML = `<div class="error">Failed to load: ${e.message}<br><br>Try again in a moment, or check the corsproxy.io service status.</div>`;
+  }
+}
+
+// Initial load (use cache if fresh)
+(async () => {
+  try {
+    const data = await fetchQQQ(false);
+    render(data);
+  } catch (e) {
+    document.getElementById('content').innerHTML = `<div class="error">Failed to load: ${e.message}<br><br>Try again in a moment, or check the corsproxy.io service status.</div>`;
+  }
+})();
+</script>
+</body>
+</html>
