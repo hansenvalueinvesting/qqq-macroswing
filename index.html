@@ -299,8 +299,8 @@
     <div class="ctl">
       <label>Features</label>
       <select id="ctl-features">
-        <option value="ret">Returns only</option>
-        <option value="ret_vol" selected>Returns + 5d vol</option>
+        <option value="ret">Weekly return only</option>
+        <option value="ret_vol" selected>Weekly return + weekly vol</option>
       </select>
     </div>
     <div class="ctl">
@@ -347,7 +347,7 @@
     <div class="panel-title">QQQ price · regime shading <span class="hint">hover for detail</span></div>
     <div class="chart-wrap"><canvas id="price-chart"></canvas></div>
     <div class="note">
-      <strong>Reading the chart.</strong> Background bands show the model's <em>hard</em> regime label per day (the Viterbi path — the single most likely sequence of regimes). The line is QQQ adjusted close.
+      <strong>Reading the chart.</strong> Background bands show the model's <em>hard</em> regime label per day (the Viterbi path — the single most likely sequence of regimes — with runs shorter than 3 bars merged into their neighbor so the chart isn't a strobe). The line is QQQ adjusted close.
     </div>
   </div>
 </div>
@@ -367,17 +367,17 @@
       <thead>
         <tr>
           <th>State</th>
-          <th class="num">Mean return (daily)</th>
-          <th class="num">Vol of return</th>
-          <th class="num">Mean 5d vol</th>
-          <th class="num">Vol of 5d vol</th>
+          <th class="num">Mean weekly return</th>
+          <th class="num">Std of weekly return</th>
+          <th class="num">Mean weekly vol</th>
+          <th class="num">Std of weekly vol</th>
           <th class="num">Stickiness</th>
         </tr>
       </thead>
       <tbody></tbody>
     </table>
     <div class="note">
-      <strong>What's here.</strong> For each hidden state the model learned a Gaussian distribution over the observed features. <strong>Mean return</strong> is the typical daily log-return when in that regime; <strong>vol</strong> is the standard deviation. <strong>Stickiness</strong> = expected duration in days before the regime switches, computed as 1 / (1 − P(stay)).
+      <strong>What's here.</strong> For each hidden state the model learned a Gaussian distribution over the observed features. <strong>Mean weekly return</strong> is the typical 5-day average log-return when in that regime; <strong>weekly vol</strong> is the typical 5-day realized volatility. Std columns are the spread the model expects around each mean. <strong>Stickiness</strong> = expected duration in days before the regime switches, computed as 1 / (1 − P(stay)).
     </div>
   </div>
 
@@ -418,7 +418,7 @@
     <table id="data-table">
       <thead>
         <tr>
-          <th>Date</th><th>Close</th><th>Log return</th><th>5d vol</th>
+          <th>Date</th><th>Close</th><th>1d return</th><th>5d mean ret</th><th>5d vol</th>
           <th>P(LONG)</th><th>P(SHORT)</th><th>P(CHOP)</th><th>Regime</th>
         </tr>
       </thead>
@@ -426,7 +426,7 @@
     </table>
   </div>
   <div class="note">
-    <strong>Transparency.</strong> This is every input the model saw and every output it produced. Log return = ln(Close / PrevClose). 5d vol = standard deviation of the prior 5 log returns. P(state) = smoothed posterior probability from forward-backward. Regime = Viterbi hard label.
+    <strong>Transparency.</strong> 1d return = ln(Close / PrevClose). 5d mean ret = average of the prior 5 daily log returns (this is what the model sees as its "weekly return" input). 5d vol = standard deviation of those same 5 returns. P(state) = smoothed posterior probability from forward-backward. Regime = Viterbi hard label after short-run smoothing.
   </div>
 </div>
 
@@ -438,8 +438,11 @@
     <ol style="margin-left: 20px; margin-bottom: 12px;">
       <li><strong>Initial probabilities π</strong> — chance the chain starts in each state.</li>
       <li><strong>Transition matrix A</strong> — chance of moving from state i to state j between bars.</li>
-      <li><strong>Emission distributions</strong> — each state has a Gaussian over [log return, 5d vol] (diagonal covariance, so the two features are treated as conditionally independent given the state).</li>
+      <li><strong>Emission distributions</strong> — each state has a Gaussian over the observed features (default: <em>weekly mean log return</em> and <em>weekly realized volatility</em>, both computed over the prior 5 trading bars). Diagonal covariance, so the two features are treated as conditionally independent given the state.</li>
     </ol>
+    <p style="margin-bottom: 12px;"><strong>Why weekly features.</strong> Raw 1-day returns are extremely noisy: a single up-then-down zig-zag will flip a daily-based HMM between states constantly. Averaging the prior week smooths out that noise and lets the model lock onto trend persistence instead of single-day sign flips.</p>
+    <p style="margin-bottom: 12px;"><strong>Stickiness prior.</strong> The M-step adds Dirichlet pseudocounts to the transition matrix (50 on the diagonal, 1 off-diagonal) — a soft prior that says "regimes are persistent unless the data strongly disagrees." Without it, EM is happy to learn a near-uniform transition matrix that flips daily on residual noise. The model can still override this prior when the data demands.</p>
+    <p style="margin-bottom: 12px;"><strong>Post-hoc smoothing.</strong> After Viterbi decoding, runs shorter than 3 bars are merged into the longer neighboring run. This removes single-bar flickers — a one-day blip is not a regime change.</p>
     <p style="margin-bottom: 12px;"><strong>Training.</strong> We run <strong>Baum-Welch</strong>, an Expectation-Maximization algorithm:
       (E-step) given current parameters, compute the probability of being in each state on each day via the forward-backward algorithm;
       (M-step) re-estimate π, A, and the Gaussians using those probabilities as soft assignments. Repeat until log-likelihood stops improving meaningfully. We do this from several random initializations and keep the best fit.</p>
@@ -484,23 +487,27 @@ async function fetchQQQ(range) {
 // Features
 // =====================================================================
 function buildFeatures(series, useVol) {
+  // Per-bar 1-day log return (kept for display only)
   const rows = [];
   for (let i = 1; i < series.length; i++) {
     const r = Math.log(series[i].close / series[i-1].close);
-    rows.push({ date: series[i].date, close: series[i].close, ret: r, vol5: null });
+    rows.push({ date: series[i].date, close: series[i].close, ret: r, ret5: null, vol5: null });
   }
+  // Weekly (5-bar) mean log return and realized volatility, computed on the prior week
+  // so today's observation only uses past information.
   const W = 5;
   for (let i = 0; i < rows.length; i++) {
-    if (i < W) { rows[i].vol5 = null; continue; }
+    if (i < W) continue;
     let m = 0;
     for (let k = i - W; k < i; k++) m += rows[k].ret;
     m /= W;
     let v = 0;
     for (let k = i - W; k < i; k++) v += (rows[k].ret - m) ** 2;
+    rows[i].ret5 = m;
     rows[i].vol5 = Math.sqrt(v / (W - 1));
   }
-  const clean = rows.filter(r => r.vol5 != null);
-  const X = clean.map(r => useVol ? [r.ret, r.vol5] : [r.ret]);
+  const clean = rows.filter(r => r.vol5 != null && r.ret5 != null);
+  const X = clean.map(r => useVol ? [r.ret5, r.vol5] : [r.ret5]);
   return { rows: clean, X };
 }
 
@@ -624,15 +631,27 @@ function forwardBackward(X, model) {
   return { gamma, xiSum, logLik };
 }
 
+// Dirichlet pseudocounts on the transition matrix — biases the MAP estimate of A
+// toward sticky regimes (large diagonal). Without this, EM is happy to learn a
+// near-uniform A that flips the state daily on standardized return noise.
+const TRANS_PRIOR_DIAG = 50;
+const TRANS_PRIOR_OFF = 1;
+
 function mStep(X, gamma, xiSum) {
   const T = X.length, K = gamma[0].length, D = X[0].length;
   const pi = gamma[0].slice();
   const A = Array.from({length: K}, () => new Array(K));
   for (let j = 0; j < K; j++) {
     let rowSum = 0;
-    for (let k = 0; k < K; k++) rowSum += xiSum[j][k];
+    for (let k = 0; k < K; k++) {
+      const prior = (j === k) ? TRANS_PRIOR_DIAG : TRANS_PRIOR_OFF;
+      rowSum += xiSum[j][k] + prior;
+    }
     if (rowSum < 1e-12) rowSum = 1e-12;
-    for (let k = 0; k < K; k++) A[j][k] = xiSum[j][k] / rowSum;
+    for (let k = 0; k < K; k++) {
+      const prior = (j === k) ? TRANS_PRIOR_DIAG : TRANS_PRIOR_OFF;
+      A[j][k] = (xiSum[j][k] + prior) / rowSum;
+    }
   }
   const mu = Array.from({length: K}, () => new Array(D).fill(0));
   const sig2 = Array.from({length: K}, () => new Array(D).fill(0));
@@ -725,8 +744,43 @@ async function trainAsync(X, opts, onProgress) {
     allLogs.push({ restart: r, log });
   }
   const fb = forwardBackward(X, best.model);
-  const path = viterbi(X, best.model);
+  const rawPath = viterbi(X, best.model);
+  const path = smoothPath(rawPath, 3);
   return { ...best, gamma: fb.gamma, path, allLogs };
+}
+
+// Collapse Viterbi runs shorter than minRun into the longer neighboring run.
+// Removes single-bar flickers that don't actually correspond to a real regime
+// change. Iterates until stable.
+function smoothPath(path, minRun) {
+  const p = path.slice();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const runs = [];
+    let s = 0;
+    for (let i = 1; i <= p.length; i++) {
+      if (i === p.length || p[i] !== p[s]) {
+        runs.push({ state: p[s], start: s, end: i - 1, len: i - s });
+        s = i;
+      }
+    }
+    for (let r = 0; r < runs.length; r++) {
+      if (runs[r].len >= minRun) continue;
+      const prev = r > 0 ? runs[r-1] : null;
+      const next = r < runs.length - 1 ? runs[r+1] : null;
+      let into = null;
+      if (prev && next) into = prev.len >= next.len ? prev.state : next.state;
+      else if (prev) into = prev.state;
+      else if (next) into = next.state;
+      if (into != null && into !== runs[r].state) {
+        for (let i = runs[r].start; i <= runs[r].end; i++) p[i] = into;
+        changed = true;
+        break;
+      }
+    }
+  }
+  return p;
 }
 
 // =====================================================================
@@ -881,7 +935,7 @@ function renderResults({ rows, featureMu, featureSd, result, useVol, range, rest
   });
   document.getElementById('training-log').textContent = lines.join('\n');
   document.getElementById('training-summary').textContent =
-    `Range: ${range} · ${T} bars · features: ${useVol ? 'returns + 5d vol' : 'returns only'} · ${restarts} restart(s) · best log-likelihood ${result.logLik.toFixed(3)}`;
+    `Range: ${range} · ${T} bars · features: ${useVol ? 'weekly mean ret + weekly vol' : 'weekly mean ret only'} · ${restarts} restart(s) · best log-likelihood ${result.logLik.toFixed(3)}`;
 
   TRAINED = { rows, probByLabel, states };
 }
@@ -932,7 +986,9 @@ function renderPriceChart(rows, states) {
               const r = rows[i];
               return [
                 `Close: $${r.close.toFixed(2)}`,
-                `Return: ${(r.ret*100).toFixed(2)}%`,
+                `1d return: ${(r.ret*100).toFixed(2)}%`,
+                `Weekly mean ret: ${(r.ret5*100).toFixed(2)}%`,
+                `Weekly vol: ${(r.vol5*100).toFixed(2)}%`,
                 `Regime: ${states[i]}`
               ];
             }
@@ -991,6 +1047,7 @@ function renderDataTable(rows, probByLabel, states) {
       <td>${r.date.toISOString().slice(0,10)}</td>
       <td>${r.close.toFixed(2)}</td>
       <td>${(r.ret*100).toFixed(3)}%</td>
+      <td>${(r.ret5*100).toFixed(3)}%</td>
       <td>${(r.vol5*100).toFixed(3)}%</td>
       <td>${(p.LONG*100).toFixed(1)}%</td>
       <td>${(p.SHORT*100).toFixed(1)}%</td>
@@ -1014,13 +1071,14 @@ document.getElementById('data-filter').addEventListener('input', e => {
 document.getElementById('csv-btn').addEventListener('click', () => {
   if (!TRAINED) return;
   const { rows, probByLabel, states } = TRAINED;
-  const lines = ['date,close,log_return,vol5,p_long,p_short,p_chop,regime'];
+  const lines = ['date,close,log_return,weekly_mean_return,weekly_vol,p_long,p_short,p_chop,regime'];
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i], p = probByLabel[i];
     lines.push([
       r.date.toISOString().slice(0,10),
       r.close.toFixed(4),
       r.ret.toFixed(6),
+      r.ret5.toFixed(6),
       r.vol5.toFixed(6),
       p.LONG.toFixed(4), p.SHORT.toFixed(4), p.CHOP.toFixed(4),
       states[i]
