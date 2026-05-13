@@ -347,8 +347,8 @@
     <div class="ctl">
       <label>Features</label>
       <select id="ctl-features">
-        <option value="ret">Weekly return only</option>
-        <option value="ret_vol" selected>Weekly return + weekly vol</option>
+        <option value="ret">Monthly return only</option>
+        <option value="ret_vol" selected>Monthly return + monthly vol</option>
       </select>
     </div>
     <div class="ctl">
@@ -405,7 +405,7 @@
       <tbody></tbody>
     </table>
     <div class="note">
-      <strong>What's here.</strong> For each hidden state the model learned a Gaussian over the observed features. <strong>Mean weekly return</strong> is the typical 5-day average log-return; <strong>weekly vol</strong> is the typical 5-day realized volatility; <strong>std</strong> rows are the spread the model expects around each mean. <strong>Stickiness</strong> = expected duration in trading days, 1 / (1 − P(stay)).
+      <strong>What's here.</strong> For each hidden state the model learned a Gaussian over the observed features. <strong>Mean monthly return</strong> is the typical 21-day average daily log-return; <strong>monthly vol</strong> is the typical 21-day realized volatility; <strong>std</strong> rows are the spread the model expects around each mean. <strong>Stickiness</strong> = expected duration in trading days, 1 / (1 − P(stay)).
     </div>
   </div>
 
@@ -479,7 +479,7 @@
     <table id="data-table">
       <thead>
         <tr>
-          <th>Date</th><th>Close</th><th>1d return</th><th>5d mean ret</th><th>5d vol</th>
+          <th>Date</th><th>Close</th><th>1d return</th><th>21d mean ret</th><th>21d vol</th>
           <th>P(LONG)</th><th>P(SHORT)</th><th>P(CHOP)</th><th>Regime</th>
         </tr>
       </thead>
@@ -487,7 +487,7 @@
     </table>
   </div>
   <div class="note">
-    <strong>Transparency.</strong> 1d return = ln(Close / PrevClose). 5d mean ret = average of the prior 5 daily log returns (this is what the model sees as its "weekly return" input). 5d vol = standard deviation of those same 5 returns. P(state) = smoothed posterior probability from forward-backward. Regime = Viterbi hard label after short-run smoothing.
+    <strong>Transparency.</strong> 1d return = ln(Close / PrevClose). 21d mean ret = average of the prior 21 daily log returns (this is what the model sees as its "monthly return" input). 21d vol = standard deviation of those same 21 returns. P(state) = smoothed posterior probability from forward-backward. Regime = Viterbi hard label after short-run smoothing.
   </div>
 </div>
 
@@ -499,9 +499,9 @@
     <ol style="margin-left: 20px; margin-bottom: 12px;">
       <li><strong>Initial probabilities π</strong> — chance the chain starts in each state.</li>
       <li><strong>Transition matrix A</strong> — chance of moving from state i to state j between bars.</li>
-      <li><strong>Emission distributions</strong> — each state has a Gaussian over the observed features (default: <em>weekly mean log return</em> and <em>weekly realized volatility</em>, both computed over the prior 5 trading bars). Diagonal covariance, so the two features are treated as conditionally independent given the state.</li>
+      <li><strong>Emission distributions</strong> — each state has a Gaussian over the observed features (default: <em>monthly mean log return</em> and <em>monthly realized volatility</em>, both computed over the prior 21 trading bars). Diagonal covariance, so the two features are treated as conditionally independent given the state.</li>
     </ol>
-    <p style="margin-bottom: 12px;"><strong>Why weekly features.</strong> Raw 1-day returns are extremely noisy: a single up-then-down zig-zag will flip a daily-based HMM between states constantly. Averaging the prior week smooths out that noise and lets the model lock onto trend persistence instead of single-day sign flips.</p>
+    <p style="margin-bottom: 12px;"><strong>Why monthly features.</strong> Raw 1-day returns are extremely noisy: a single up-then-down zig-zag will flip a daily-based HMM between states constantly. Averaging the prior month smooths out that noise and lets the model lock onto trend persistence instead of single-day sign flips.</p>
     <p style="margin-bottom: 12px;"><strong>Stickiness prior.</strong> The M-step adds Dirichlet pseudocounts to the transition matrix (50 on the diagonal, 1 off-diagonal) — a soft prior that says "regimes are persistent unless the data strongly disagrees." Without it, EM is happy to learn a near-uniform transition matrix that flips daily on residual noise. The model can still override this prior when the data demands.</p>
     <p style="margin-bottom: 12px;"><strong>Post-hoc smoothing.</strong> After Viterbi decoding, runs shorter than 3 bars are merged into the longer neighboring run. This removes single-bar flickers — a one-day blip is not a regime change.</p>
     <p style="margin-bottom: 12px;"><strong>Training.</strong> We run <strong>Baum-Welch</strong>, an Expectation-Maximization algorithm:
@@ -554,9 +554,9 @@ function buildFeatures(series, useVol) {
     const r = Math.log(series[i].close / series[i-1].close);
     rows.push({ date: series[i].date, close: series[i].close, ret: r, ret5: null, vol5: null });
   }
-  // Weekly (5-bar) mean log return and realized volatility, computed on the prior week
-  // so today's observation only uses past information.
-  const W = 5;
+  // Monthly (21-bar) mean log return and realized volatility, computed on the prior
+  // month so today's observation only uses past information.
+  const W = 21;
   for (let i = 0; i < rows.length; i++) {
     if (i < W) continue;
     let m = 0;
@@ -967,10 +967,10 @@ function renderResults({ rows, featureMu, featureSd, result, useVol, range, rest
       ${stateOrder.map(s => `<th><span class="pill ${s.toLowerCase()}">${s}</span></th>`).join('')}
     </tr>`;
   const metricRows = [
-    ['Mean weekly return', 'muRet'],
-    ['Std of weekly return', 'sdRet'],
-    ['Mean weekly vol', 'muVol'],
-    ['Std of weekly vol', 'sdVol'],
+    ['Mean monthly return', 'muRet'],
+    ['Std of monthly return', 'sdRet'],
+    ['Mean monthly vol', 'muVol'],
+    ['Std of monthly vol', 'sdVol'],
     ['Stickiness', 'stick'],
   ];
   document.querySelector('#params-table tbody').innerHTML = metricRows.map(([name, key]) => `
@@ -1012,7 +1012,7 @@ function renderResults({ rows, featureMu, featureSd, result, useVol, range, rest
   });
   document.getElementById('training-log').textContent = lines.join('\n');
   document.getElementById('training-summary').textContent =
-    `Range: ${range} · ${T} bars · features: ${useVol ? 'weekly mean ret + weekly vol' : 'weekly mean ret only'} · ${restarts} restart(s) · best log-likelihood ${result.logLik.toFixed(3)}`;
+    `Range: ${range} · ${T} bars · features: ${useVol ? 'monthly mean ret + monthly vol' : 'monthly mean ret only'} · ${restarts} restart(s) · best log-likelihood ${result.logLik.toFixed(3)}`;
 
   TRAINED = { rows, probByLabel, states };
 }
@@ -1089,8 +1089,8 @@ function renderPriceChart(rows, states) {
               return [
                 `Close: $${r.close.toFixed(2)}`,
                 `1d return: ${(r.ret*100).toFixed(2)}%`,
-                `Weekly mean ret: ${(r.ret5*100).toFixed(2)}%`,
-                `Weekly vol: ${(r.vol5*100).toFixed(2)}%`,
+                `Monthly mean ret: ${(r.ret5*100).toFixed(2)}%`,
+                `Monthly vol: ${(r.vol5*100).toFixed(2)}%`,
                 `Regime: ${states[i]}`
               ];
             }
@@ -1204,7 +1204,7 @@ document.getElementById('data-filter').addEventListener('input', e => {
 document.getElementById('csv-btn').addEventListener('click', () => {
   if (!TRAINED) return;
   const { rows, probByLabel, states } = TRAINED;
-  const lines = ['date,close,log_return,weekly_mean_return,weekly_vol,p_long,p_short,p_chop,regime'];
+  const lines = ['date,close,log_return,monthly_mean_return,monthly_vol,p_long,p_short,p_chop,regime'];
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i], p = probByLabel[i];
     lines.push([
@@ -1237,7 +1237,7 @@ async function run() {
     const maxIters = Math.max(10, Math.min(500, parseInt(document.getElementById('ctl-iters').value || '80')));
     const restarts = Math.max(1, Math.min(20, parseInt(document.getElementById('ctl-restarts').value || '5')));
 
-    const featureLabel = useVol ? 'weekly ret + weekly vol' : 'weekly ret only';
+    const featureLabel = useVol ? 'monthly ret + monthly vol' : 'monthly ret only';
     document.getElementById('loader-sub').textContent =
       `3-state regime model · QQQ · ${range} daily · ${featureLabel}`;
     setStage('Fetching QQQ data…', 0.02, range);
