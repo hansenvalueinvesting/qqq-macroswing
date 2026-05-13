@@ -285,7 +285,9 @@ async function fetchQQQ(force = false) {
     const cached = localStorage.getItem(CACHE_KEY);
     if (cached) {
       const parsed = JSON.parse(cached);
-      if (Date.now() - parsed.ts < CACHE_TTL) return parsed.data;
+      if (Date.now() - parsed.ts < CACHE_TTL) {
+        return parsed.data.map(d => ({ date: new Date(d.date), close: d.close }));
+      }
     }
   }
   const yahooUrl = 'https://query1.finance.yahoo.com/v8/finance/chart/QQQ?range=2y&interval=1d';
