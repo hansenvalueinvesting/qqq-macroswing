@@ -339,16 +339,16 @@
       <label>History</label>
       <select id="ctl-range">
         <option value="1y">1 year</option>
-        <option value="2y" selected>2 years</option>
+        <option value="2y">2 years</option>
         <option value="5y">5 years</option>
-        <option value="10y">10 years</option>
+        <option value="10y" selected>10 years</option>
       </select>
     </div>
     <div class="ctl">
       <label>Features</label>
       <select id="ctl-features">
-        <option value="ret">Monthly return only</option>
-        <option value="ret_vol" selected>Monthly return + monthly vol</option>
+        <option value="ret">1d return only</option>
+        <option value="ret_vol" selected>1d return + 10d trend-MSE</option>
       </select>
     </div>
     <div class="ctl">
@@ -405,7 +405,7 @@
       <tbody></tbody>
     </table>
     <div class="note">
-      <strong>What's here.</strong> For each hidden state the model learned a Gaussian over the observed features. <strong>Mean monthly return</strong> is the typical 21-day average daily log-return; <strong>monthly vol</strong> is the typical 21-day realized volatility; <strong>std</strong> rows are the spread the model expects around each mean. <strong>Stickiness</strong> = expected duration in trading days, 1 / (1 − P(stay)).
+      <strong>What's here.</strong> For each hidden state the model learned a full-covariance bivariate Gaussian over (1-day log return, 10-day trend-MSE). <strong>Means</strong> are the typical values inside that regime, <strong>std</strong> rows are the spread. <strong>Return ↔ vol correlation</strong> is the within-regime cross-feature correlation — full covariance captures this; a diagonal model would throw it away. <strong>Stickiness</strong> = expected duration in trading days, 1 / (1 − P(stay)).
     </div>
   </div>
 
@@ -479,7 +479,7 @@
     <table id="data-table">
       <thead>
         <tr>
-          <th>Date</th><th>Close</th><th>1d return</th><th>21d mean ret</th><th>21d vol</th>
+          <th>Date</th><th>Close</th><th>1d return</th><th>10d trend-MSE (×10⁴)</th>
           <th>P(LONG)</th><th>P(SHORT)</th><th>P(CHOP)</th><th>Regime</th>
         </tr>
       </thead>
@@ -487,7 +487,7 @@
     </table>
   </div>
   <div class="note">
-    <strong>Transparency.</strong> 1d return = ln(Close / PrevClose). 21d mean ret = average of the prior 21 daily log returns (this is what the model sees as its "monthly return" input). 21d vol = standard deviation of those same 21 returns. P(state) = smoothed posterior probability from forward-backward. Regime = Viterbi hard label after short-run smoothing.
+    <strong>Transparency.</strong> 1d return = ln(Close / PrevClose). 10d trend-MSE = mean squared deviation of log-close from its 10-day moving average over the prior 10 bars — the paper's volatility feature, expressed in log-price units so it doesn't drift with the absolute price level. Shown ×10⁴ for readability. P(state) = smoothed posterior probability from forward-backward. Regime = Viterbi hard label after short-run smoothing.
   </div>
 </div>
 
@@ -499,10 +499,10 @@
     <ol style="margin-left: 20px; margin-bottom: 12px;">
       <li><strong>Initial probabilities π</strong> — chance the chain starts in each state.</li>
       <li><strong>Transition matrix A</strong> — chance of moving from state i to state j between bars.</li>
-      <li><strong>Emission distributions</strong> — each state has a Gaussian over the observed features (default: <em>monthly mean log return</em> and <em>monthly realized volatility</em>, both computed over the prior 21 trading bars). Diagonal covariance, so the two features are treated as conditionally independent given the state.</li>
+      <li><strong>Emission distributions</strong> — each state has a <em>full-covariance</em> bivariate Gaussian over (1-day log return, 10-day trend-MSE). Full covariance is important: bear days are jointly low-return <em>and</em> high-vol, and that cross-feature correlation is exactly what separates a real bear cluster from "low-return-but-calm" chop. A diagonal model throws this signal away.</li>
     </ol>
-    <p style="margin-bottom: 12px;"><strong>Why monthly features.</strong> Raw 1-day returns are extremely noisy: a single up-then-down zig-zag will flip a daily-based HMM between states constantly. Averaging the prior month smooths out that noise and lets the model lock onto trend persistence instead of single-day sign flips.</p>
-    <p style="margin-bottom: 12px;"><strong>Stickiness prior.</strong> The M-step adds Dirichlet pseudocounts to the transition matrix (50 on the diagonal, 1 off-diagonal) — a soft prior that says "regimes are persistent unless the data strongly disagrees." Without it, EM is happy to learn a near-uniform transition matrix that flips daily on residual noise. The model can still override this prior when the data demands.</p>
+    <p style="margin-bottom: 12px;"><strong>The volatility feature.</strong> "Trend-MSE" = mean squared deviation of log-close from its 10-day moving average, over the prior 10 bars. This is the Wang/Lin/Mikhelson 2020 feature, modified to use log-close so it doesn't drift with the absolute price level over the 10-year training window.</p>
+    <p style="margin-bottom: 12px;"><strong>Why 10 years of training data.</strong> EM needs strong signal to find well-separated state Gaussians. A 10-year window for QQQ contains Q4 2018, March 2020, all of 2022, and other clear stress periods — these anchor the "SHORT" state cluster firmly and let the other two regimes sort themselves around it. On a 2-year window of mostly trending data, the model has to invent a bear state from scraps, and the boundaries blur.</p>
     <p style="margin-bottom: 12px;"><strong>Post-hoc smoothing.</strong> After Viterbi decoding, runs shorter than 3 bars are merged into the longer neighboring run. This removes single-bar flickers — a one-day blip is not a regime change.</p>
     <p style="margin-bottom: 12px;"><strong>Training.</strong> We run <strong>Baum-Welch</strong>, an Expectation-Maximization algorithm:
       (E-step) given current parameters, compute the probability of being in each state on each day via the forward-backward algorithm;
@@ -545,30 +545,40 @@ async function fetchQQQ(range) {
 }
 
 // =====================================================================
-// Features
+// Features  —  matches Wang/Lin/Mikhelson (2020):
+//   feature 1: 1-day log return
+//   feature 2: 10-day MSE of log(close) about its 10-day moving average
+// We use log-close (paper used raw close) so the vol feature is scale-
+// invariant across the 7x QQQ price growth in the training window.
 // =====================================================================
+const VOL_WINDOW = 10;
+
 function buildFeatures(series, useVol) {
-  // Per-bar 1-day log return (kept for display only)
   const rows = [];
   for (let i = 1; i < series.length; i++) {
     const r = Math.log(series[i].close / series[i-1].close);
-    rows.push({ date: series[i].date, close: series[i].close, ret: r, ret5: null, vol5: null });
+    rows.push({
+      date: series[i].date,
+      close: series[i].close,
+      logClose: Math.log(series[i].close),
+      ret: r,
+      volMSE: null,
+    });
   }
-  // Monthly (21-bar) mean log return and realized volatility, computed on the prior
-  // month so today's observation only uses past information.
-  const W = 21;
   for (let i = 0; i < rows.length; i++) {
-    if (i < W) continue;
-    let m = 0;
-    for (let k = i - W; k < i; k++) m += rows[k].ret;
-    m /= W;
-    let v = 0;
-    for (let k = i - W; k < i; k++) v += (rows[k].ret - m) ** 2;
-    rows[i].ret5 = m;
-    rows[i].vol5 = Math.sqrt(v / (W - 1));
+    if (i < VOL_WINDOW - 1) continue;
+    let mean = 0;
+    for (let k = i - VOL_WINDOW + 1; k <= i; k++) mean += rows[k].logClose;
+    mean /= VOL_WINDOW;
+    let mse = 0;
+    for (let k = i - VOL_WINDOW + 1; k <= i; k++) {
+      const d = rows[k].logClose - mean;
+      mse += d * d;
+    }
+    rows[i].volMSE = mse / VOL_WINDOW;
   }
-  const clean = rows.filter(r => r.vol5 != null && r.ret5 != null);
-  const X = clean.map(r => useVol ? [r.ret5, r.vol5] : [r.ret5]);
+  const clean = rows.filter(r => r.volMSE != null);
+  const X = clean.map(r => useVol ? [r.ret, r.volMSE] : [r.ret]);
   return { rows: clean, X };
 }
 
@@ -584,10 +594,16 @@ function standardize(X) {
 }
 
 // =====================================================================
-// HMM core (diagonal Gaussian emissions, log-space)
+// HMM core — full covariance Gaussian emissions, log-space
+//
+// State k has emission N(mu_k, Sigma_k) where Sigma_k is a DxD positive
+// definite covariance matrix (D = 1 or 2 here). Full covariance lets the
+// model capture the within-regime correlation between return and vol
+// (e.g. bear days are jointly low-return AND high-vol).
 // =====================================================================
 const LOG_2PI = Math.log(2 * Math.PI);
-const SIGMA_FLOOR = 1e-3;
+const VAR_FLOOR = 1e-6;   // diagonal floor on variances
+const RIDGE = 1e-6;       // ridge added to Sigma if det collapses
 
 function logsumexp(arr) {
   let m = -Infinity;
@@ -598,13 +614,54 @@ function logsumexp(arr) {
   return m + Math.log(s);
 }
 
-function logGaussian(x, mu, sig2) {
-  let lp = 0;
-  for (let d = 0; d < x.length; d++) {
-    const diff = x[d] - mu[d];
-    lp += -0.5 * (LOG_2PI + Math.log(sig2[d]) + (diff * diff) / sig2[d]);
+// Invert + log-determinant for a small (1x1 or 2x2) symmetric PD matrix.
+// Adds a ridge to the diagonal if the determinant is too small to be PD.
+function invSym(S) {
+  const D = S.length;
+  if (D === 1) {
+    const v = Math.max(S[0][0], VAR_FLOOR);
+    return { inv: [[1/v]], logDet: Math.log(v) };
   }
-  return lp;
+  // 2x2: symmetrize, then add ridge until PD
+  let a = S[0][0], b = 0.5 * (S[0][1] + S[1][0]), d = S[1][1];
+  let det = a*d - b*b;
+  let tries = 0;
+  while ((det < 1e-12 || a < VAR_FLOOR || d < VAR_FLOOR) && tries < 6) {
+    a += RIDGE * Math.pow(10, tries);
+    d += RIDGE * Math.pow(10, tries);
+    det = a*d - b*b;
+    tries++;
+  }
+  return {
+    inv: [[ d/det, -b/det], [-b/det,  a/det]],
+    logDet: Math.log(det),
+  };
+}
+
+function logGaussianFull(x, mu, invS, logDet) {
+  const D = x.length;
+  let m = 0;
+  if (D === 1) {
+    const dx = x[0] - mu[0];
+    m = dx * invS[0][0] * dx;
+  } else {
+    const dx0 = x[0] - mu[0], dx1 = x[1] - mu[1];
+    m = dx0 * (invS[0][0]*dx0 + invS[0][1]*dx1)
+      + dx1 * (invS[1][0]*dx0 + invS[1][1]*dx1);
+  }
+  return -0.5 * (D * LOG_2PI + logDet + m);
+}
+
+// Precompute inverse + logDet of each Sigma_k for fast emission eval
+function precomputeCov(model) {
+  const K = model.Sigma.length;
+  model.invSigma = new Array(K);
+  model.logDetSigma = new Array(K);
+  for (let k = 0; k < K; k++) {
+    const r = invSym(model.Sigma[k]);
+    model.invSigma[k] = r.inv;
+    model.logDetSigma[k] = r.logDet;
+  }
 }
 
 function mulberry32(seed) {
@@ -618,23 +675,33 @@ function mulberry32(seed) {
 
 function initHMM(X, K, rng) {
   const T = X.length, D = X[0].length;
+  // Seed means from K random observations
   const idx = [];
   while (idx.length < K) {
     const r = Math.floor(rng() * T);
     if (!idx.includes(r)) idx.push(r);
   }
   const mu = idx.map(i => X[i].slice());
+  // Global covariance as starting Sigma_k for every state
   const globMu = new Array(D).fill(0);
   for (let t = 0; t < T; t++) for (let d = 0; d < D; d++) globMu[d] += X[t][d];
   for (let d = 0; d < D; d++) globMu[d] /= T;
-  const globVar = new Array(D).fill(0);
-  for (let t = 0; t < T; t++) for (let d = 0; d < D; d++) globVar[d] += (X[t][d] - globMu[d]) ** 2;
-  for (let d = 0; d < D; d++) globVar[d] = Math.max(globVar[d] / T, SIGMA_FLOOR * SIGMA_FLOOR);
-  const sig2 = Array.from({length: K}, () => globVar.slice());
+  const globCov = Array.from({length: D}, () => new Array(D).fill(0));
+  for (let t = 0; t < T; t++)
+    for (let i = 0; i < D; i++)
+      for (let j = 0; j < D; j++)
+        globCov[i][j] += (X[t][i] - globMu[i]) * (X[t][j] - globMu[j]);
+  for (let i = 0; i < D; i++)
+    for (let j = 0; j < D; j++)
+      globCov[i][j] /= T;
+  const Sigma = Array.from({length: K}, () => globCov.map(row => row.slice()));
+  // Mildly sticky initial transition matrix
   const pi = new Array(K).fill(1 / K);
   const A = Array.from({length: K}, () => new Array(K).fill((1 - 0.9) / (K - 1)));
   for (let i = 0; i < K; i++) A[i][i] = 0.9;
-  return { pi, A, mu, sig2 };
+  const model = { pi, A, mu, Sigma };
+  precomputeCov(model);
+  return model;
 }
 
 function forwardBackward(X, model) {
@@ -642,7 +709,7 @@ function forwardBackward(X, model) {
   const logB = Array.from({length: T}, () => new Array(K));
   for (let t = 0; t < T; t++)
     for (let k = 0; k < K; k++)
-      logB[t][k] = logGaussian(X[t], model.mu[k], model.sig2[k]);
+      logB[t][k] = logGaussianFull(X[t], model.mu[k], model.invSigma[k], model.logDetSigma[k]);
 
   const logA = model.A.map(row => row.map(v => Math.log(Math.max(v, 1e-300))));
   const logPi = model.pi.map(v => Math.log(Math.max(v, 1e-300)));
@@ -692,30 +759,22 @@ function forwardBackward(X, model) {
   return { gamma, xiSum, logLik };
 }
 
-// Dirichlet pseudocounts on the transition matrix — biases the MAP estimate of A
-// toward sticky regimes (large diagonal). Without this, EM is happy to learn a
-// near-uniform A that flips the state daily on standardized return noise.
-const TRANS_PRIOR_DIAG = 50;
-const TRANS_PRIOR_OFF = 1;
-
+// Standard Baum-Welch M-step with full covariance. No transition prior —
+// the paper doesn't use one, and with 10y of data + full cov the model
+// converges to persistent regimes naturally.
 function mStep(X, gamma, xiSum) {
   const T = X.length, K = gamma[0].length, D = X[0].length;
   const pi = gamma[0].slice();
   const A = Array.from({length: K}, () => new Array(K));
   for (let j = 0; j < K; j++) {
     let rowSum = 0;
-    for (let k = 0; k < K; k++) {
-      const prior = (j === k) ? TRANS_PRIOR_DIAG : TRANS_PRIOR_OFF;
-      rowSum += xiSum[j][k] + prior;
-    }
+    for (let k = 0; k < K; k++) rowSum += xiSum[j][k];
     if (rowSum < 1e-12) rowSum = 1e-12;
-    for (let k = 0; k < K; k++) {
-      const prior = (j === k) ? TRANS_PRIOR_DIAG : TRANS_PRIOR_OFF;
-      A[j][k] = (xiSum[j][k] + prior) / rowSum;
-    }
+    for (let k = 0; k < K; k++) A[j][k] = xiSum[j][k] / rowSum;
   }
   const mu = Array.from({length: K}, () => new Array(D).fill(0));
-  const sig2 = Array.from({length: K}, () => new Array(D).fill(0));
+  const Sigma = Array.from({length: K}, () =>
+    Array.from({length: D}, () => new Array(D).fill(0)));
   const gSum = new Array(K).fill(0);
   for (let t = 0; t < T; t++) for (let k = 0; k < K; k++) gSum[k] += gamma[t][k];
   for (let k = 0; k < K; k++) {
@@ -724,15 +783,26 @@ function mStep(X, gamma, xiSum) {
       for (let d = 0; d < D; d++)
         mu[k][d] += gamma[t][k] * X[t][d];
     for (let d = 0; d < D; d++) mu[k][d] /= gs;
-    for (let t = 0; t < T; t++)
-      for (let d = 0; d < D; d++) {
-        const diff = X[t][d] - mu[k][d];
-        sig2[k][d] += gamma[t][k] * diff * diff;
+    for (let t = 0; t < T; t++) {
+      const w = gamma[t][k];
+      for (let i = 0; i < D; i++) {
+        const di = X[t][i] - mu[k][i];
+        for (let j = 0; j < D; j++) {
+          const dj = X[t][j] - mu[k][j];
+          Sigma[k][i][j] += w * di * dj;
+        }
       }
+    }
+    for (let i = 0; i < D; i++)
+      for (let j = 0; j < D; j++)
+        Sigma[k][i][j] /= gs;
+    // Floor variances on the diagonal
     for (let d = 0; d < D; d++)
-      sig2[k][d] = Math.max(sig2[k][d] / gs, SIGMA_FLOOR * SIGMA_FLOOR);
+      if (Sigma[k][d][d] < VAR_FLOOR) Sigma[k][d][d] = VAR_FLOOR;
   }
-  return { pi, A, mu, sig2 };
+  const model = { pi, A, mu, Sigma };
+  precomputeCov(model);
+  return model;
 }
 
 function viterbi(X, model) {
@@ -742,7 +812,7 @@ function viterbi(X, model) {
   const delta = Array.from({length: T}, () => new Array(K));
   const psi = Array.from({length: T}, () => new Array(K));
   for (let k = 0; k < K; k++)
-    delta[0][k] = logPi[k] + logGaussian(X[0], model.mu[k], model.sig2[k]);
+    delta[0][k] = logPi[k] + logGaussianFull(X[0], model.mu[k], model.invSigma[k], model.logDetSigma[k]);
   for (let t = 1; t < T; t++) {
     for (let k = 0; k < K; k++) {
       let bestVal = -Infinity, bestArg = 0;
@@ -750,7 +820,7 @@ function viterbi(X, model) {
         const v = delta[t-1][j] + logA[j][k];
         if (v > bestVal) { bestVal = v; bestArg = j; }
       }
-      delta[t][k] = bestVal + logGaussian(X[t], model.mu[k], model.sig2[k]);
+      delta[t][k] = bestVal + logGaussianFull(X[t], model.mu[k], model.invSigma[k], model.logDetSigma[k]);
       psi[t][k] = bestArg;
     }
   }
@@ -936,7 +1006,9 @@ function renderResults({ rows, featureMu, featureSd, result, useVol, range, rest
   document.getElementById('meta-bars').textContent = String(T);
   document.getElementById('meta-ll').textContent = result.logLik.toFixed(2);
 
-  // Params table (transposed: rows = metric, cols = state)
+  // Params table (transposed: rows = metric, cols = state). Reads from the
+  // learned full covariance Sigma_k and converts back from standardized
+  // space to the real feature units.
   const D = result.model.mu[0].length;
   const kFor = { LONG: null, SHORT: null, CHOP: null };
   for (let k = 0; k < result.model.mu.length; k++) kFor[labelOf[k]] = k;
@@ -944,34 +1016,39 @@ function renderResults({ rows, featureMu, featureSd, result, useVol, range, rest
   const stateData = {};
   for (const s of stateOrder) {
     const k = kFor[s];
+    const S = result.model.Sigma[k];
     const muRet = result.model.mu[k][0] * featureSd[0] + featureMu[0];
-    const sdRet = Math.sqrt(result.model.sig2[k][0]) * featureSd[0];
-    let muVol = null, sdVol = null;
+    const sdRet = Math.sqrt(Math.max(S[0][0], 0)) * featureSd[0];
+    let muVol = null, sdVol = null, corr = null;
     if (D >= 2) {
       muVol = result.model.mu[k][1] * featureSd[1] + featureMu[1];
-      sdVol = Math.sqrt(result.model.sig2[k][1]) * featureSd[1];
+      sdVol = Math.sqrt(Math.max(S[1][1], 0)) * featureSd[1];
+      const sdSt0 = Math.sqrt(Math.max(S[0][0], 1e-12));
+      const sdSt1 = Math.sqrt(Math.max(S[1][1], 1e-12));
+      corr = S[0][1] / (sdSt0 * sdSt1);
     }
     const pStay = result.model.A[k][k];
     stateData[s] = {
       muRet: fmtPct2(muRet),
       sdRet: fmtPct2(sdRet),
-      muVol: muVol == null ? '—' : fmtPct2(muVol),
-      sdVol: sdVol == null ? '—' : fmtPct2(sdVol),
+      muVol: muVol == null ? '—' : (muVol * 1e4).toFixed(2),
+      sdVol: sdVol == null ? '—' : (sdVol * 1e4).toFixed(2),
+      corr:  corr  == null ? '—' : corr.toFixed(2),
       stick: (1 / Math.max(1e-9, 1 - pStay)).toFixed(1) + ' d',
     };
   }
-  // Pill header row
   document.querySelector('#params-table thead').innerHTML = `
     <tr>
       <th>Metric</th>
       ${stateOrder.map(s => `<th><span class="pill ${s.toLowerCase()}">${s}</span></th>`).join('')}
     </tr>`;
   const metricRows = [
-    ['Mean monthly return', 'muRet'],
-    ['Std of monthly return', 'sdRet'],
-    ['Mean monthly vol', 'muVol'],
-    ['Std of monthly vol', 'sdVol'],
-    ['Stickiness', 'stick'],
+    ['Mean 1d return',         'muRet'],
+    ['Std of 1d return',       'sdRet'],
+    ['Mean 10d trend-MSE (×10⁴)', 'muVol'],
+    ['Std of 10d trend-MSE (×10⁴)', 'sdVol'],
+    ['Return ↔ vol correlation', 'corr'],
+    ['Stickiness',             'stick'],
   ];
   document.querySelector('#params-table tbody').innerHTML = metricRows.map(([name, key]) => `
     <tr>
@@ -1012,7 +1089,7 @@ function renderResults({ rows, featureMu, featureSd, result, useVol, range, rest
   });
   document.getElementById('training-log').textContent = lines.join('\n');
   document.getElementById('training-summary').textContent =
-    `Range: ${range} · ${T} bars · features: ${useVol ? 'monthly mean ret + monthly vol' : 'monthly mean ret only'} · ${restarts} restart(s) · best log-likelihood ${result.logLik.toFixed(3)}`;
+    `Range: ${range} · ${T} bars · features: ${useVol ? '1d return + 10d trend-MSE' : '1d return only'} · full covariance · ${restarts} restart(s) · best log-likelihood ${result.logLik.toFixed(3)}`;
 
   TRAINED = { rows, probByLabel, states };
 }
@@ -1089,8 +1166,7 @@ function renderPriceChart(rows, states) {
               return [
                 `Close: $${r.close.toFixed(2)}`,
                 `1d return: ${(r.ret*100).toFixed(2)}%`,
-                `Monthly mean ret: ${(r.ret5*100).toFixed(2)}%`,
-                `Monthly vol: ${(r.vol5*100).toFixed(2)}%`,
+                `10d trend-MSE: ${(r.volMSE*1e4).toFixed(2)} ×10⁻⁴`,
                 `Regime: ${states[i]}`
               ];
             }
@@ -1180,8 +1256,7 @@ function renderDataTable(rows, probByLabel, states) {
       <td>${r.date.toISOString().slice(0,10)}</td>
       <td>${r.close.toFixed(2)}</td>
       <td>${(r.ret*100).toFixed(3)}%</td>
-      <td>${(r.ret5*100).toFixed(3)}%</td>
-      <td>${(r.vol5*100).toFixed(3)}%</td>
+      <td>${(r.volMSE*1e4).toFixed(2)}</td>
       <td>${(p.LONG*100).toFixed(1)}%</td>
       <td>${(p.SHORT*100).toFixed(1)}%</td>
       <td>${(p.CHOP*100).toFixed(1)}%</td>
@@ -1204,15 +1279,14 @@ document.getElementById('data-filter').addEventListener('input', e => {
 document.getElementById('csv-btn').addEventListener('click', () => {
   if (!TRAINED) return;
   const { rows, probByLabel, states } = TRAINED;
-  const lines = ['date,close,log_return,monthly_mean_return,monthly_vol,p_long,p_short,p_chop,regime'];
+  const lines = ['date,close,log_return,trend_mse_10d,p_long,p_short,p_chop,regime'];
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i], p = probByLabel[i];
     lines.push([
       r.date.toISOString().slice(0,10),
       r.close.toFixed(4),
       r.ret.toFixed(6),
-      r.ret5.toFixed(6),
-      r.vol5.toFixed(6),
+      r.volMSE.toFixed(8),
       p.LONG.toFixed(4), p.SHORT.toFixed(4), p.CHOP.toFixed(4),
       states[i]
     ].join(','));
@@ -1237,7 +1311,7 @@ async function run() {
     const maxIters = Math.max(10, Math.min(500, parseInt(document.getElementById('ctl-iters').value || '80')));
     const restarts = Math.max(1, Math.min(20, parseInt(document.getElementById('ctl-restarts').value || '5')));
 
-    const featureLabel = useVol ? 'monthly ret + monthly vol' : 'monthly ret only';
+    const featureLabel = useVol ? '1d return + 10d trend-MSE' : '1d return only';
     document.getElementById('loader-sub').textContent =
       `3-state regime model · QQQ · ${range} daily · ${featureLabel}`;
     setStage('Fetching QQQ data…', 0.02, range);
