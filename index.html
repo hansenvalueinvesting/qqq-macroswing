@@ -262,7 +262,7 @@
 
 <div class="loader" id="loader">
   <div class="loader-title">Training HMM…</div>
-  <div class="loader-sub">3-state regime model · QQQ · 2y daily</div>
+  <div class="loader-sub" id="loader-sub">3-state regime model · QQQ</div>
   <div class="loader-stage" id="loader-stage">Fetching data…</div>
   <div class="progress-wrap"><div class="progress-bar" id="progress-bar"></div></div>
   <div class="loader-detail" id="loader-detail">&nbsp;</div>
@@ -1104,6 +1104,9 @@ async function run() {
     const maxIters = Math.max(10, Math.min(500, parseInt(document.getElementById('ctl-iters').value || '80')));
     const restarts = Math.max(1, Math.min(20, parseInt(document.getElementById('ctl-restarts').value || '5')));
 
+    const featureLabel = useVol ? 'weekly ret + weekly vol' : 'weekly ret only';
+    document.getElementById('loader-sub').textContent =
+      `3-state regime model · QQQ · ${range} daily · ${featureLabel}`;
     setStage('Fetching QQQ data…', 0.02, range);
     const series = await fetchQQQ(range);
     setStage('Building features…', 0.06, `${series.length} bars`);
