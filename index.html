@@ -214,6 +214,93 @@
   .pill.chop { color: var(--gray); border: 1px solid var(--gray); }
   .pill.short { color: var(--red); border: 1px solid var(--red); }
 
+  /* Methodology panel */
+  .methodology-panel { grid-column: 1 / -1; }
+  .methodology-toggle {
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    font-family: inherit;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.2em;
+    cursor: pointer;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+  }
+  .methodology-toggle:hover { color: var(--accent); }
+  .methodology-toggle .chev { transition: transform 0.2s; display: inline-block; }
+  .methodology-toggle.open .chev { transform: rotate(90deg); }
+  .methodology-body { display: none; margin-top: 16px; }
+  .methodology-body.open { display: block; }
+  .method-section { margin-bottom: 20px; }
+  .method-section:last-child { margin-bottom: 0; }
+  .method-section h4 {
+    font-family: 'Fraunces', serif;
+    font-weight: 500;
+    font-size: 14px;
+    color: var(--text);
+    margin-bottom: 10px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  .method-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 16px;
+    padding: 6px 0;
+    font-size: 12px;
+    align-items: baseline;
+  }
+  .method-row .k { color: var(--muted); }
+  .method-row .v { color: var(--text); }
+  .method-row .v.mono { font-family: inherit; }
+  .method-formula {
+    background: #0d0d0d;
+    border: 1px solid var(--border);
+    padding: 10px 12px;
+    font-size: 11px;
+    color: var(--text);
+    line-height: 1.7;
+    margin: 8px 0;
+    white-space: pre-wrap;
+  }
+  .method-formula .c { color: var(--muted); }
+  .rule-row {
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .rule-row:last-child { border-bottom: none; }
+  .rule-row .name {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 4px;
+  }
+  .rule-row .name .state { font-weight: 700; letter-spacing: 0.1em; }
+  .rule-row .name .state.long { color: var(--green); }
+  .rule-row .name .state.short { color: var(--red); }
+  .rule-row .name .state.chop { color: var(--gray); }
+  .rule-row .name .badge {
+    font-size: 10px;
+    padding: 2px 8px;
+    border: 1px solid var(--border);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+  .rule-row .name .badge.pass { color: var(--green); border-color: var(--green); }
+  .rule-row .name .badge.fail { color: var(--muted); }
+  .rule-row .name .badge.active {
+    color: var(--accent); border-color: var(--accent);
+  }
+  .rule-row .conds { color: var(--muted); font-size: 11px; line-height: 1.6; }
+  .rule-row .conds .ok { color: var(--green); }
+  .rule-row .conds .bad { color: var(--red); }
+
   .loading, .error {
     text-align: center;
     padding: 60px 20px;
@@ -419,6 +506,20 @@ function render(data) {
   const cond_50_above_200 = sma50 > sma200;
   const cond_slope_negative = slope < -SLOPE_DEAD_ZONE_ANN;
 
+  // Methodology figures
+  const SMA_SLOPE_WINDOW = 5;
+  const sma200_prev = sma200Arr[last - SMA_SLOPE_WINDOW];
+  const slopePerDay = sma200_prev != null ? (sma200 - sma200_prev) / SMA_SLOPE_WINDOW : null;
+  const priceVsSma200Pct = price / sma200 - 1;
+  const sma50VsSma200Pct = sma50 / sma200 - 1;
+  const rule_long = cond_above_200 && cond_50_above_200;
+  const rule_short = !cond_above_200 && cond_slope_negative;
+  const rule_chop = !rule_long && !rule_short;
+  const ruleBadge = (passed, active) => active
+    ? '<span class="badge active">active</span>'
+    : (passed ? '<span class="badge pass">passes</span>' : '<span class="badge fail">no</span>');
+  const yn = (b, txt) => `<span class="${b ? 'ok' : 'bad'}">${b ? '✓' : '✗'} ${txt}</span>`;
+
   const content = `
     <div class="grid">
       <div class="panel">
@@ -466,7 +567,7 @@ function render(data) {
           <div class="check ${cond_50_above_200 ? 'yes' : 'no'}">${cond_50_above_200 ? '✓' : '✗'}</div>
         </div>
         <div class="metrics-row">
-          <div class="label">200-SMA slope (20d, ann.)</div>
+          <div class="label">200-SMA slope (5d, ann.)</div>
           <div class="val">${fmtPct(slope)}</div>
           <div class="delta">${Math.abs(slope) < SLOPE_DEAD_ZONE_ANN ? 'flat' : (slope > 0 ? 'rising' : 'falling')}</div>
           <div class="check ${cond_slope_negative ? 'no' : 'yes'}">${cond_slope_negative ? '↓' : '↑'}</div>
@@ -477,6 +578,96 @@ function render(data) {
     <div class="panel chart-panel">
       <div class="panel-title">QQQ · 2-year price + SMAs (shaded by historical signal state)</div>
       <div class="chart-wrap"><canvas id="chart"></canvas></div>
+    </div>
+
+    <div class="panel methodology-panel">
+      <button class="methodology-toggle" onclick="toggleMethodology(this)">
+        <span class="chev">▶</span><span>Show calculations</span>
+      </button>
+      <div class="methodology-body">
+
+        <div class="method-section">
+          <h4>Inputs (most recent bar)</h4>
+          <div class="method-row"><span class="k">Date</span><span class="v">${fmtDate(data[last].date)}</span></div>
+          <div class="method-row"><span class="k">QQQ close</span><span class="v">$${fmtNum(price)}</span></div>
+          <div class="method-row"><span class="k">50-day SMA</span><span class="v">$${fmtNum(sma50)}</span></div>
+          <div class="method-row"><span class="k">200-day SMA</span><span class="v">$${fmtNum(sma200)}</span></div>
+          <div class="method-row"><span class="k">200-day SMA, 5 bars ago</span><span class="v">${sma200_prev != null ? '$' + fmtNum(sma200_prev) : '—'}</span></div>
+        </div>
+
+        <div class="method-section">
+          <h4>Derived</h4>
+          <div class="method-row">
+            <span class="k">Price vs 200-SMA</span>
+            <span class="v">${fmtPct(priceVsSma200Pct)}</span>
+          </div>
+          <div class="method-formula"><span class="c">price / SMA200 − 1</span>
+= ${fmtNum(price)} / ${fmtNum(sma200)} − 1
+= ${fmtPct(priceVsSma200Pct)}</div>
+
+          <div class="method-row">
+            <span class="k">50-SMA vs 200-SMA</span>
+            <span class="v">${fmtPct(sma50VsSma200Pct)}</span>
+          </div>
+          <div class="method-formula"><span class="c">SMA50 / SMA200 − 1</span>
+= ${fmtNum(sma50)} / ${fmtNum(sma200)} − 1
+= ${fmtPct(sma50VsSma200Pct)}</div>
+
+          <div class="method-row">
+            <span class="k">200-SMA slope (5d, annualized)</span>
+            <span class="v">${fmtPct(slope)}</span>
+          </div>
+          <div class="method-formula"><span class="c">slope = ((SMA200[t] − SMA200[t−5]) / 5) / SMA200[t] × 252</span>
+${sma200_prev != null
+  ? `= ((${fmtNum(sma200)} − ${fmtNum(sma200_prev)}) / 5) / ${fmtNum(sma200)} × 252
+= ${slopePerDay != null ? fmtNum(slopePerDay, 4) : '—'} / day  →  ${fmtPct(slope)} annualized`
+  : '= (insufficient history)'}</div>
+        </div>
+
+        <div class="method-section">
+          <h4>Rule evaluation</h4>
+          <div class="rule-row">
+            <div class="name">
+              <span class="state long">LONG</span>
+              ${ruleBadge(rule_long, sig.state === 'LONG')}
+            </div>
+            <div class="conds">
+              ${yn(cond_above_200, `price > SMA200  (${fmtNum(price)} ${cond_above_200 ? '>' : '≤'} ${fmtNum(sma200)})`)}
+              &nbsp;·&nbsp;
+              ${yn(cond_50_above_200, `SMA50 > SMA200  (${fmtNum(sma50)} ${cond_50_above_200 ? '>' : '≤'} ${fmtNum(sma200)})`)}
+            </div>
+          </div>
+          <div class="rule-row">
+            <div class="name">
+              <span class="state short">SHORT</span>
+              ${ruleBadge(rule_short, sig.state === 'SHORT')}
+            </div>
+            <div class="conds">
+              ${yn(!cond_above_200, `price < SMA200  (${fmtNum(price)} ${!cond_above_200 ? '<' : '≥'} ${fmtNum(sma200)})`)}
+              &nbsp;·&nbsp;
+              ${yn(cond_slope_negative, `slope < −${(SLOPE_DEAD_ZONE_ANN*100).toFixed(0)}% ann.  (${fmtPct(slope)} ${cond_slope_negative ? '<' : '≥'} ${fmtPct(-SLOPE_DEAD_ZONE_ANN)})`)}
+            </div>
+          </div>
+          <div class="rule-row">
+            <div class="name">
+              <span class="state chop">CHOP</span>
+              ${ruleBadge(rule_chop, sig.state === 'CHOP')}
+            </div>
+            <div class="conds">Default state when neither LONG nor SHORT conditions are met.</div>
+          </div>
+        </div>
+
+        <div class="method-section">
+          <h4>Constants</h4>
+          <div class="method-row"><span class="k">SMA fast period</span><span class="v">50 trading days</span></div>
+          <div class="method-row"><span class="k">SMA slow period</span><span class="v">200 trading days</span></div>
+          <div class="method-row"><span class="k">Slope window</span><span class="v">5 trading days (backward finite difference)</span></div>
+          <div class="method-row"><span class="k">Annualization factor</span><span class="v">252 trading days / year</span></div>
+          <div class="method-row"><span class="k">Slope dead zone</span><span class="v">±${(SLOPE_DEAD_ZONE_ANN*100).toFixed(0)}% annualized</span></div>
+          <div class="method-row"><span class="k">Data source</span><span class="v">Yahoo Finance · 2y daily · close prices</span></div>
+        </div>
+
+      </div>
     </div>
 
     <div class="panel log-panel">
@@ -645,6 +836,14 @@ function drawChart(data, sma200Arr, sma50Arr, states, transitions) {
     },
     plugins: [shadingPlugin]
   });
+}
+
+function toggleMethodology(btn) {
+  btn.classList.toggle('open');
+  const body = btn.parentElement.querySelector('.methodology-body');
+  body.classList.toggle('open');
+  btn.querySelector('span:last-child').textContent =
+    body.classList.contains('open') ? 'Hide calculations' : 'Show calculations';
 }
 
 async function refresh(force = true) {
