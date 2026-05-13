@@ -289,11 +289,13 @@ async function fetchQQQ(force = false) {
     }
   }
   const url = 'https://query1.finance.yahoo.com/v8/finance/chart/QQQ?range=2y&interval=1d';
-  // Use a CORS proxy since Yahoo doesn't send CORS headers for browser requests
-  const proxied = 'https://corsproxy.io/?' + encodeURIComponent(url);
+  // Use a CORS proxy since Yahoo doesn't send CORS headers for browser requests.
+  // allorigins.win/get wraps the response in { contents: "<stringified JSON>" }
+  const proxied = 'https://api.allorigins.win/get?url=' + encodeURIComponent(url);
   const res = await fetch(proxied);
-  if (!res.ok) throw new Error('Yahoo fetch failed: ' + res.status);
-  const json = await res.json();
+  if (!res.ok) throw new Error('Proxy fetch failed: ' + res.status);
+  const wrapper = await res.json();
+  const json = JSON.parse(wrapper.contents);
   const result = json.chart.result[0];
   const timestamps = result.timestamp;
   const closes = result.indicators.quote[0].close;
@@ -660,7 +662,7 @@ async function refresh(force = true) {
     const data = await fetchQQQ(force);
     render(data);
   } catch (e) {
-    document.getElementById('content').innerHTML = `<div class="error">Failed to load: ${e.message}<br><br>Try again in a moment, or check the corsproxy.io service status.</div>`;
+    document.getElementById('content').innerHTML = `<div class="error">Failed to load: ${e.message}<br><br>The CORS proxy may be down. Try again in a moment.</div>`;
   }
 }
 
@@ -670,7 +672,7 @@ async function refresh(force = true) {
     const data = await fetchQQQ(false);
     render(data);
   } catch (e) {
-    document.getElementById('content').innerHTML = `<div class="error">Failed to load: ${e.message}<br><br>Try again in a moment, or check the corsproxy.io service status.</div>`;
+    document.getElementById('content').innerHTML = `<div class="error">Failed to load: ${e.message}<br><br>The CORS proxy may be down. Try again in a moment.</div>`;
   }
 })();
 </script>
