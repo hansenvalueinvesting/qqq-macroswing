@@ -308,6 +308,63 @@
   .rule-row .conds .ok { color: var(--green); }
   .rule-row .conds .bad { color: var(--red); }
 
+  /* HMM probability bars */
+  .hmm-probs {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+  .prob-row {
+    display: grid;
+    grid-template-columns: 60px 1fr 60px;
+    gap: 10px;
+    align-items: center;
+    padding: 4px 0;
+    font-size: 11px;
+  }
+  .prob-label {
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    font-size: 10px;
+  }
+  .prob-label.long { color: var(--green); }
+  .prob-label.chop { color: var(--gray); }
+  .prob-label.short { color: var(--red); }
+  .prob-bar {
+    position: relative;
+    height: 8px;
+    background: var(--border);
+    overflow: hidden;
+  }
+  .prob-fill {
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+  }
+  .prob-fill.long { background: var(--green); }
+  .prob-fill.chop { background: var(--gray); }
+  .prob-fill.short { background: var(--red); }
+  .prob-val {
+    text-align: right;
+    color: var(--text);
+    font-weight: 500;
+  }
+
+  /* HMM transition matrix */
+  table.hmm-matrix {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 6px 0;
+    font-size: 11px;
+  }
+  table.hmm-matrix th, table.hmm-matrix td {
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    text-align: center;
+  }
+  table.hmm-matrix thead th { color: var(--muted); font-weight: 400; text-transform: uppercase; letter-spacing: 0.1em; font-size: 9px; }
+  table.hmm-matrix tbody th { color: var(--muted); font-weight: 400; text-align: right; font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; }
+  table.hmm-matrix td.diag { color: var(--accent); font-weight: 700; }
+
   .loading, .error {
     text-align: center;
     padding: 60px 20px;
@@ -364,7 +421,208 @@
 <script>
 const CACHE_KEY = 'qqq-trend-signal-cache';
 const CACHE_TTL = 4 * 60 * 60 * 1000; // 4 hours
-const SLOPE_DEAD_ZONE_ANN = 0.05; // ±5% annualized
+
+// HMM regime model
+const HMM_CACHE_KEY = 'qqq-hmm-params-v1';
+const HMM_N_STATES = 3;
+const HMM_N_RESTARTS = 6;
+const HMM_MAX_ITER = 100;
+const HMM_TOL = 1e-5;
+const HMM_DIAG_PRIOR = 0.95; // initial self-transition probability bias
+
+// ---------- HMM core ----------
+function gaussLogPdf(x, mu, sigma) {
+  const z = (x - mu) / sigma;
+  return -0.5 * z * z - Math.log(sigma) - 0.5 * Math.log(2 * Math.PI);
+}
+
+function logSumExp(arr) {
+  let m = -Infinity;
+  for (const v of arr) if (v > m) m = v;
+  if (!isFinite(m)) return m;
+  let s = 0;
+  for (const v of arr) s += Math.exp(v - m);
+  return m + Math.log(s);
+}
+
+function emitMatrix(obs, means, stds) {
+  const T = obs.length, K = means.length;
+  const E = Array.from({length: T}, () => new Array(K));
+  for (let t = 0; t < T; t++) {
+    for (let k = 0; k < K; k++) {
+      E[t][k] = gaussLogPdf(obs[t], means[k], stds[k]);
+    }
+  }
+  return E;
+}
+
+function forwardLog(E, logPi, logA) {
+  const T = E.length, K = logPi.length;
+  const a = Array.from({length: T}, () => new Array(K));
+  for (let k = 0; k < K; k++) a[0][k] = logPi[k] + E[0][k];
+  const tmp = new Array(K);
+  for (let t = 1; t < T; t++) {
+    for (let k = 0; k < K; k++) {
+      for (let j = 0; j < K; j++) tmp[j] = a[t-1][j] + logA[j][k];
+      a[t][k] = logSumExp(tmp) + E[t][k];
+    }
+  }
+  return a;
+}
+
+function backwardLog(E, logA) {
+  const T = E.length, K = logA.length;
+  const b = Array.from({length: T}, () => new Array(K).fill(0));
+  const tmp = new Array(K);
+  for (let t = T - 2; t >= 0; t--) {
+    for (let k = 0; k < K; k++) {
+      for (let j = 0; j < K; j++) tmp[j] = logA[k][j] + E[t+1][j] + b[t+1][j];
+      b[t][k] = logSumExp(tmp);
+    }
+  }
+  return b;
+}
+
+function viterbiLog(E, logPi, logA) {
+  const T = E.length, K = logPi.length;
+  const dp = Array.from({length: T}, () => new Array(K));
+  const bk = Array.from({length: T}, () => new Array(K).fill(0));
+  for (let k = 0; k < K; k++) dp[0][k] = logPi[k] + E[0][k];
+  for (let t = 1; t < T; t++) {
+    for (let k = 0; k < K; k++) {
+      let bestJ = 0, bestV = -Infinity;
+      for (let j = 0; j < K; j++) {
+        const v = dp[t-1][j] + logA[j][k];
+        if (v > bestV) { bestV = v; bestJ = j; }
+      }
+      dp[t][k] = bestV + E[t][k];
+      bk[t][k] = bestJ;
+    }
+  }
+  let end = 0;
+  for (let k = 1; k < K; k++) if (dp[T-1][k] > dp[T-1][end]) end = k;
+  const path = new Array(T);
+  path[T-1] = end;
+  for (let t = T - 2; t >= 0; t--) path[t] = bk[t+1][path[t+1]];
+  return path;
+}
+
+function initParams(obs, K, perturb = 0.2) {
+  const T = obs.length;
+  const sorted = [...obs].sort((a, b) => a - b);
+  const means = new Array(K), stds = new Array(K);
+  for (let k = 0; k < K; k++) {
+    const lo = Math.floor(T * k / K), hi = Math.floor(T * (k + 1) / K);
+    const slice = sorted.slice(lo, hi);
+    const mu = slice.reduce((s, x) => s + x, 0) / slice.length;
+    const v = slice.reduce((s, x) => s + (x - mu) ** 2, 0) / slice.length;
+    means[k] = mu + (Math.random() - 0.5) * Math.sqrt(v) * perturb;
+    stds[k] = Math.sqrt(Math.max(v, 1e-10)) * (1 + (Math.random() - 0.5) * perturb);
+  }
+  const logPi = new Array(K).fill(Math.log(1 / K));
+  const logA = Array.from({length: K}, (_, i) =>
+    Array.from({length: K}, (_, j) =>
+      Math.log(i === j ? HMM_DIAG_PRIOR : (1 - HMM_DIAG_PRIOR) / (K - 1))
+    )
+  );
+  return { logPi, logA, means, stds };
+}
+
+function baumWelch(obs, K, maxIter, tol) {
+  const T = obs.length;
+  let { logPi, logA, means, stds } = initParams(obs, K);
+  let prevLL = -Infinity;
+  let finalLL = -Infinity;
+
+  for (let iter = 0; iter < maxIter; iter++) {
+    const E = emitMatrix(obs, means, stds);
+    const a = forwardLog(E, logPi, logA);
+    const b = backwardLog(E, logA);
+    const ll = logSumExp(a[T-1]);
+    finalLL = ll;
+
+    // gamma[t][k] = log P(s_t=k | obs)
+    const gamma = Array.from({length: T}, () => new Array(K));
+    for (let t = 0; t < T; t++) {
+      const tmp = new Array(K);
+      for (let k = 0; k < K; k++) tmp[k] = a[t][k] + b[t][k];
+      const denom = logSumExp(tmp);
+      for (let k = 0; k < K; k++) gamma[t][k] = tmp[k] - denom;
+    }
+
+    // M-step: pi
+    for (let k = 0; k < K; k++) logPi[k] = gamma[0][k];
+
+    // M-step: A using xi
+    const xiNumer = Array.from({length: K}, () => new Array(K).fill(-Infinity));
+    for (let i = 0; i < K; i++) {
+      for (let j = 0; j < K; j++) {
+        const terms = new Array(T - 1);
+        for (let t = 0; t < T - 1; t++) {
+          terms[t] = a[t][i] + logA[i][j] + E[t+1][j] + b[t+1][j] - ll;
+        }
+        xiNumer[i][j] = logSumExp(terms);
+      }
+    }
+    for (let i = 0; i < K; i++) {
+      const rowDenom = logSumExp(xiNumer[i]);
+      for (let j = 0; j < K; j++) logA[i][j] = xiNumer[i][j] - rowDenom;
+    }
+
+    // M-step: means & stds
+    for (let k = 0; k < K; k++) {
+      let wSum = 0, wxSum = 0;
+      for (let t = 0; t < T; t++) {
+        const w = Math.exp(gamma[t][k]);
+        wSum += w; wxSum += w * obs[t];
+      }
+      const mu = wxSum / wSum;
+      let wvSum = 0;
+      for (let t = 0; t < T; t++) {
+        const w = Math.exp(gamma[t][k]);
+        wvSum += w * (obs[t] - mu) ** 2;
+      }
+      means[k] = mu;
+      stds[k] = Math.sqrt(Math.max(wvSum / wSum, 1e-10));
+    }
+
+    if (Math.abs(ll - prevLL) < tol) break;
+    prevLL = ll;
+  }
+  return { logPi, logA, means, stds, logLikelihood: finalLL };
+}
+
+function fitHMM(obs, K = HMM_N_STATES, nRestarts = HMM_N_RESTARTS, maxIter = HMM_MAX_ITER, tol = HMM_TOL) {
+  let best = null;
+  for (let r = 0; r < nRestarts; r++) {
+    try {
+      const result = baumWelch(obs, K, maxIter, tol);
+      if (!isFinite(result.logLikelihood)) continue;
+      if (!best || result.logLikelihood > best.logLikelihood) best = result;
+    } catch (e) { /* skip degenerate restart */ }
+  }
+  // Sort states by mean ascending → SHORT, CHOP, LONG
+  const order = best.means.map((_, i) => i).sort((a, b) => best.means[a] - best.means[b]);
+  const stateNames = ['SHORT', 'CHOP', 'LONG'];
+  const labelOf = {};
+  order.forEach((origIdx, sortedPos) => { labelOf[origIdx] = stateNames[sortedPos]; });
+  return { ...best, labelOf, order, stateNames };
+}
+
+function hmmPosterior(E, logPi, logA) {
+  const T = E.length, K = logPi.length;
+  const a = forwardLog(E, logPi, logA);
+  const b = backwardLog(E, logA);
+  const post = Array.from({length: T}, () => new Array(K));
+  for (let t = 0; t < T; t++) {
+    const tmp = new Array(K);
+    for (let k = 0; k < K; k++) tmp[k] = a[t][k] + b[t][k];
+    const denom = logSumExp(tmp);
+    for (let k = 0; k < K; k++) post[t][k] = Math.exp(tmp[k] - denom);
+  }
+  return post;
+}
+// ---------- end HMM core ----------
 
 // State colors for chart shading
 const STATE_COLORS = {
@@ -407,40 +665,67 @@ function sma(arr, period, idx) {
   return s / period;
 }
 
-// Backward finite difference over `window` days of the SMA series.
-// Returns annualized % rate of change at `idx`.
-function smaSlope(smaArr, idx, window = 5) {
-  const prev = smaArr[idx - window];
-  const curr = smaArr[idx];
-  if (prev == null || curr == null) return null;
-  const perDay = (curr - prev) / window;
-  return (perDay / curr) * 252;
-}
+function trainOrLoadHMM(returns, lastBarDate) {
+  // Try cache: keyed by last-bar date so we don't retrain on every page load.
+  try {
+    const raw = localStorage.getItem(HMM_CACHE_KEY);
+    if (raw) {
+      const cached = JSON.parse(raw);
+      if (cached.lastBarDate === lastBarDate && cached.nReturns === returns.length) {
+        return { model: cached.model, fromCache: true, trainMs: 0 };
+      }
+    }
+  } catch (e) { /* ignore */ }
 
-function computeSignal(price, sma200, sma50, slope50Ann) {
-  if (sma200 == null || sma50 == null || slope50Ann == null) return null;
-  const aboveSMA200 = price > sma200;
-  const sma50Rising = slope50Ann > SLOPE_DEAD_ZONE_ANN;
-  const sma50Falling = slope50Ann < -SLOPE_DEAD_ZONE_ANN;
-  if (aboveSMA200 && sma50Rising) {
-    return { state: 'LONG', reason: `QQQ ${((price/sma200 - 1)*100).toFixed(1)}% above 200-SMA, 50-SMA rising at ${(slope50Ann*100).toFixed(1)}% ann.` };
-  }
-  if (!aboveSMA200 && sma50Falling) {
-    return { state: 'SHORT', reason: `QQQ ${((price/sma200 - 1)*100).toFixed(1)}% below 200-SMA, 50-SMA falling at ${(slope50Ann*100).toFixed(1)}% ann.` };
-  }
-  return { state: 'CHOP', reason: `QQQ ${((price/sma200 - 1)*100).toFixed(1)}% vs 200-SMA, 50-SMA slope ${(slope50Ann*100).toFixed(1)}% ann. (no confirmed trend).` };
+  const t0 = performance.now();
+  const model = fitHMM(returns);
+  const trainMs = performance.now() - t0;
+  try {
+    localStorage.setItem(HMM_CACHE_KEY, JSON.stringify({
+      lastBarDate, nReturns: returns.length, model
+    }));
+  } catch (e) { /* ignore quota errors */ }
+  return { model, fromCache: false, trainMs };
 }
 
 function buildStateSeries(data) {
   const closes = data.map(d => d.close);
   const sma200Arr = closes.map((_, i) => sma(closes, 200, i));
   const sma50Arr = closes.map((_, i) => sma(closes, 50, i));
-  const slopeArr = closes.map((_, i) => smaSlope(sma50Arr, i, 5));
-  const states = closes.map((c, i) => {
-    const sig = computeSignal(c, sma200Arr[i], sma50Arr[i], slopeArr[i]);
-    return sig ? sig.state : null;
-  });
-  return { sma200Arr, sma50Arr, slopeArr, states };
+
+  // Daily log returns drive the HMM. First bar has no return → null state.
+  const returns = [];
+  for (let i = 1; i < closes.length; i++) {
+    returns.push(Math.log(closes[i] / closes[i - 1]));
+  }
+  const lastBarDate = data[data.length - 1].date.toISOString().slice(0, 10);
+  const { model, fromCache, trainMs } = trainOrLoadHMM(returns, lastBarDate);
+
+  const E = emitMatrix(returns, model.means, model.stds);
+  const path = viterbiLog(E, model.logPi, model.logA);
+  const posterior = hmmPosterior(E, model.logPi, model.logA);
+
+  // Map returns-indexed arrays back to closes-indexed (offset by 1)
+  const states = new Array(closes.length).fill(null);
+  const stateProbs = new Array(closes.length).fill(null);
+  const stateProbsByLabel = new Array(closes.length).fill(null);
+  for (let i = 0; i < returns.length; i++) {
+    const stateIdx = path[i];
+    states[i + 1] = model.labelOf[stateIdx];
+    stateProbs[i + 1] = posterior[i];
+    // Reorder posterior into {LONG, CHOP, SHORT} by sorted mean
+    const byLabel = { LONG: 0, CHOP: 0, SHORT: 0 };
+    for (let k = 0; k < model.means.length; k++) {
+      byLabel[model.labelOf[k]] = posterior[i][k];
+    }
+    stateProbsByLabel[i + 1] = byLabel;
+  }
+
+  return {
+    sma200Arr, sma50Arr, states,
+    hmm: model, stateProbs, stateProbsByLabel, returns,
+    hmmFromCache: fromCache, hmmTrainMs: trainMs
+  };
 }
 
 function findTransitions(data, states) {
@@ -488,16 +773,24 @@ let chartInstance = null;
 function render(data) {
   const closes = data.map(d => d.close);
   const last = data.length - 1;
-  const { sma200Arr, sma50Arr, slopeArr, states } = buildStateSeries(data);
+  const series = buildStateSeries(data);
+  const { sma200Arr, sma50Arr, states, hmm, stateProbsByLabel, returns,
+          hmmFromCache, hmmTrainMs } = series;
   const { transitions, currentStart } = findTransitions(data, states);
 
   const price = closes[last];
   const prevPrice = closes[last - 1];
   const dayChange = (price / prevPrice - 1);
+  const todayLogReturn = Math.log(price / prevPrice);
   const sma200 = sma200Arr[last];
   const sma50 = sma50Arr[last];
-  const slope = slopeArr[last];
-  const sig = computeSignal(price, sma200, sma50, slope);
+
+  const currentState = states[last] || 'CHOP';
+  const probs = stateProbsByLabel[last] || { LONG: 0, CHOP: 0, SHORT: 0 };
+  const sig = {
+    state: currentState,
+    reason: `HMM posterior: LONG ${(probs.LONG*100).toFixed(0)}% · CHOP ${(probs.CHOP*100).toFixed(0)}% · SHORT ${(probs.SHORT*100).toFixed(0)}%. Most-likely path (Viterbi) is ${currentState}.`
+  };
 
   // Header price
   document.getElementById('qqq-price').textContent = '$' + fmtNum(price, 2);
@@ -509,20 +802,39 @@ function render(data) {
   const daysInState = last - currentStart;
   const lastFlip = transitions.length > 0 ? transitions[transitions.length - 1] : null;
 
-  // Conditions
-  const cond_above_200 = price > sma200;
-  const cond_sma50_rising = slope > SLOPE_DEAD_ZONE_ANN;
-  const cond_sma50_falling = slope < -SLOPE_DEAD_ZONE_ANN;
+  // HMM display helpers: per-state mean/std (annualized) keyed by label.
+  const annualizedByLabel = { LONG: {mu:0, sigma:0}, CHOP: {mu:0, sigma:0}, SHORT: {mu:0, sigma:0} };
+  for (let k = 0; k < hmm.means.length; k++) {
+    const lbl = hmm.labelOf[k];
+    annualizedByLabel[lbl] = {
+      mu: hmm.means[k] * 252,
+      sigma: hmm.stds[k] * Math.sqrt(252),
+      muDaily: hmm.means[k],
+      sigmaDaily: hmm.stds[k]
+    };
+  }
+  // Probability of staying in current state (diag of A keyed by current state's original idx)
+  const curIdx = hmm.order[ ['SHORT','CHOP','LONG'].indexOf(currentState) ];
+  const stayProb = Math.exp(hmm.logA[curIdx][curIdx]);
 
-  // Calculation context for inline expandables
-  const sma50_prev = sma50Arr[last - 5];
-  const rule_long = cond_above_200 && cond_sma50_rising;
-  const rule_short = !cond_above_200 && cond_sma50_falling;
-  const rule_chop = !rule_long && !rule_short;
-  const ruleBadge = (passed, active) => active
-    ? '<span class="badge active">active</span>'
-    : (passed ? '<span class="badge pass">passes</span>' : '<span class="badge fail">no</span>');
-  const yn = (b, txt) => `<span class="${b ? 'ok' : 'bad'}">${b ? '✓' : '✗'} ${txt}</span>`;
+  const probBar = (p, cls) => `<span class="prob-bar"><span class="prob-fill ${cls}" style="width:${(p*100).toFixed(1)}%"></span></span>`;
+  const transitionTable = () => {
+    const order = ['LONG','CHOP','SHORT'];
+    const idxOf = lbl => hmm.order[ ['SHORT','CHOP','LONG'].indexOf(lbl) ];
+    let html = '<table class="hmm-matrix"><thead><tr><th></th>';
+    for (const c of order) html += `<th>${c}</th>`;
+    html += '</tr></thead><tbody>';
+    for (const r of order) {
+      html += `<tr><th>${r}</th>`;
+      for (const c of order) {
+        const p = Math.exp(hmm.logA[idxOf(r)][idxOf(c)]);
+        const diag = r === c;
+        html += `<td class="${diag ? 'diag' : ''}">${(p*100).toFixed(1)}%</td>`;
+      }
+      html += '</tr>';
+    }
+    return html + '</tbody></table>';
+  };
 
   const content = `
     <div class="grid">
@@ -549,38 +861,34 @@ function render(data) {
           </div>
         </div>
 
+        <div class="hmm-probs">
+          <div class="prob-row"><span class="prob-label long">LONG</span>${probBar(probs.LONG, 'long')}<span class="prob-val">${(probs.LONG*100).toFixed(1)}%</span></div>
+          <div class="prob-row"><span class="prob-label chop">CHOP</span>${probBar(probs.CHOP, 'chop')}<span class="prob-val">${(probs.CHOP*100).toFixed(1)}%</span></div>
+          <div class="prob-row"><span class="prob-label short">SHORT</span>${probBar(probs.SHORT, 'short')}<span class="prob-val">${(probs.SHORT*100).toFixed(1)}%</span></div>
+        </div>
+
         <details class="signal-rules">
           <summary><span class="chev">▸</span><span>How this state was determined</span></summary>
           <div class="rules-body">
-            <div class="rule-row">
-              <div class="name">
-                <span class="state long">LONG</span>
-                ${ruleBadge(rule_long, sig.state === 'LONG')}
-              </div>
-              <div class="conds">
-                ${yn(cond_above_200, `price > SMA200  (${fmtNum(price)} ${cond_above_200 ? '>' : '≤'} ${fmtNum(sma200)})`)}
-                &nbsp;·&nbsp;
-                ${yn(cond_sma50_rising, `50-SMA slope > +${(SLOPE_DEAD_ZONE_ANN*100).toFixed(0)}% ann.  (${fmtPct(slope)} ${cond_sma50_rising ? '>' : '≤'} ${fmtPct(SLOPE_DEAD_ZONE_ANN)})`)}
-              </div>
-            </div>
-            <div class="rule-row">
-              <div class="name">
-                <span class="state short">SHORT</span>
-                ${ruleBadge(rule_short, sig.state === 'SHORT')}
-              </div>
-              <div class="conds">
-                ${yn(!cond_above_200, `price < SMA200  (${fmtNum(price)} ${!cond_above_200 ? '<' : '≥'} ${fmtNum(sma200)})`)}
-                &nbsp;·&nbsp;
-                ${yn(cond_sma50_falling, `50-SMA slope < −${(SLOPE_DEAD_ZONE_ANN*100).toFixed(0)}% ann.  (${fmtPct(slope)} ${cond_sma50_falling ? '<' : '≥'} ${fmtPct(-SLOPE_DEAD_ZONE_ANN)})`)}
-              </div>
-            </div>
-            <div class="rule-row">
-              <div class="name">
-                <span class="state chop">CHOP</span>
-                ${ruleBadge(rule_chop, sig.state === 'CHOP')}
-              </div>
-              <div class="conds">Default state when neither LONG nor SHORT conditions are met.</div>
-            </div>
+            <div class="metric-calc"><span class="h">Model</span>3-state Hidden Markov Model fit to daily log returns of QQQ over the last ${returns.length} bars.
+Each state has a Gaussian emission distribution N(μ, σ²); states are ordered SHORT &lt; CHOP &lt; LONG by mean return.
+
+<span class="h">Today's log return</span><span class="c">r_t = log(close[t] / close[t−1])</span>
+= log(${fmtNum(price)} / ${fmtNum(prevPrice)})
+= ${todayLogReturn.toFixed(5)}
+
+<span class="h">Per-state emission likelihood</span><span class="c">P(r_t | state) = N(r_t; μ_state, σ_state)</span>
+LONG :  μ = ${(annualizedByLabel.LONG.muDaily*100).toFixed(3)}%/day, σ = ${(annualizedByLabel.LONG.sigmaDaily*100).toFixed(3)}%/day
+CHOP :  μ = ${(annualizedByLabel.CHOP.muDaily*100).toFixed(3)}%/day, σ = ${(annualizedByLabel.CHOP.sigmaDaily*100).toFixed(3)}%/day
+SHORT:  μ = ${(annualizedByLabel.SHORT.muDaily*100).toFixed(3)}%/day, σ = ${(annualizedByLabel.SHORT.sigmaDaily*100).toFixed(3)}%/day
+
+<span class="h">Posterior (forward–backward)</span>P(state_t | r_1…r_T) combines the prior, the transition matrix A, and every observation through today.
+LONG  ${(probs.LONG*100).toFixed(1)}%  ·  CHOP  ${(probs.CHOP*100).toFixed(1)}%  ·  SHORT  ${(probs.SHORT*100).toFixed(1)}%
+
+<span class="h">Most-likely state (Viterbi)</span>${currentState}
+The argmax of the posterior and the Viterbi path can differ briefly near regime boundaries; this dashboard uses Viterbi for the displayed state and for chart shading.
+
+<span class="h">Persistence</span>P(state stays the same tomorrow | currently ${currentState}) = ${(stayProb*100).toFixed(1)}%</div>
           </div>
         </details>
       </div>
@@ -608,7 +916,7 @@ function render(data) {
             <span class="label">200-day SMA</span>
             <span class="val">$${fmtNum(sma200)}</span>
             <span class="delta">${fmtPct(price/sma200 - 1)}</span>
-            <span class="check ${cond_above_200 ? 'yes' : 'no'}">${cond_above_200 ? '✓' : '✗'}</span>
+            <span></span>
             <span class="chev">▸</span>
           </summary>
           <div class="metric-calc"><span class="h">Definition</span><span class="c">SMA200[t] = mean(close[t−199 … t])</span>
@@ -619,7 +927,7 @@ function render(data) {
 = ${fmtNum(price)} / ${fmtNum(sma200)} − 1
 = ${fmtPct(price/sma200 - 1)}
 
-<span class="h">Used by</span>LONG rule (price > SMA200) · SHORT rule (price < SMA200)</div>
+<span class="h">Note</span>Displayed for context only. The HMM does not use SMAs as features — it classifies regimes from raw daily log returns.</div>
         </details>
 
         <details class="metric">
@@ -638,32 +946,63 @@ function render(data) {
 = ${fmtNum(price)} / ${fmtNum(sma50)} − 1
 = ${fmtPct(price/sma50 - 1)}
 
-<span class="h">Used by</span>The 50-SMA itself is informational; its <em>slope</em> (next row) is what gates the LONG/SHORT rules.</div>
+<span class="h">Note</span>Informational only. State classification is done by the HMM.</div>
         </details>
 
         <details class="metric">
           <summary>
-            <span class="label">50-SMA slope (5d, ann.)</span>
-            <span class="val">${fmtPct(slope)}</span>
-            <span class="delta">${Math.abs(slope) < SLOPE_DEAD_ZONE_ANN ? 'flat' : (slope > 0 ? 'rising' : 'falling')}</span>
-            <span class="check ${cond_sma50_rising ? 'yes' : (cond_sma50_falling ? 'no' : '')}">${cond_sma50_rising ? '↑' : (cond_sma50_falling ? '↓' : '—')}</span>
+            <span class="label">HMM training</span>
+            <span class="val">${returns.length} bars</span>
+            <span class="delta">${hmmFromCache ? 'cached' : `trained in ${hmmTrainMs.toFixed(0)}ms`}</span>
+            <span></span>
             <span class="chev">▸</span>
           </summary>
-          <div class="metric-calc"><span class="h">Method</span>Backward finite difference of the 50-SMA over a 5-bar window, expressed as an annualized % rate of change.
-<span class="c">slope = ((SMA50[t] − SMA50[t−5]) / 5) / SMA50[t] × 252</span>
+          <div class="metric-calc"><span class="h">Training data</span>${returns.length} daily log returns derived from the last ${closes.length} closes.
+<span class="c">r_t = log(close[t] / close[t−1])</span>
 
-<span class="h">Calculation</span>${sma50_prev != null
-  ? `SMA50[t]      = $${fmtNum(sma50)}
-SMA50[t−5]    = $${fmtNum(sma50_prev)}
-Δ over 5 days = $${fmtNum(sma50 - sma50_prev)}
-per-day       = $${fmtNum((sma50 - sma50_prev) / 5, 4)}
-÷ SMA50[t]    = ${fmtNum(((sma50 - sma50_prev) / 5) / sma50, 6)} / day
-× 252         = ${fmtPct(slope)}  (annualized)`
-  : '(insufficient history — need 55 bars)'}
+<span class="h">Algorithm</span>Baum-Welch (EM) with ${HMM_N_RESTARTS} random restarts, up to ${HMM_MAX_ITER} iterations, log-likelihood convergence tol ${HMM_TOL}. The best restart by log-likelihood is kept. Initialization uses quantile-based means with random perturbation and a diagonal-biased transition prior (self-transition = ${HMM_DIAG_PRIOR}).
 
-<span class="h">Dead zone</span>±${(SLOPE_DEAD_ZONE_ANN*100).toFixed(0)}% annualized. Slope is "flat" inside the band, "rising"/"falling" outside.
+<span class="h">Final log-likelihood</span>${hmm.logLikelihood.toFixed(2)}
 
-<span class="h">Used by</span>LONG rule (slope > +${(SLOPE_DEAD_ZONE_ANN*100).toFixed(0)}%) · SHORT rule (slope < −${(SLOPE_DEAD_ZONE_ANN*100).toFixed(0)}%)</div>
+<span class="h">Caching</span>Trained parameters are saved to localStorage keyed by the last bar's date. The HMM only retrains when a new daily bar arrives, so day-to-day historical state assignments stay stable.
+
+<span class="h">State labeling</span>After fitting, the 3 latent states are sorted by mean return and labeled SHORT (lowest), CHOP (middle), LONG (highest).</div>
+        </details>
+
+        <details class="metric">
+          <summary>
+            <span class="label">State means (annualized)</span>
+            <span class="val">L ${fmtPct(annualizedByLabel.LONG.mu)}</span>
+            <span class="delta">S ${fmtPct(annualizedByLabel.SHORT.mu)}</span>
+            <span></span>
+            <span class="chev">▸</span>
+          </summary>
+          <div class="metric-calc"><span class="h">Per-state emission Gaussian</span>Each HMM state emits daily log returns from N(μ, σ²). Values shown annualized (× 252 for μ, × √252 for σ).
+
+           STATE      μ (ann.)        σ (ann.)
+           LONG     ${fmtPct(annualizedByLabel.LONG.mu).padStart(8)}      ${fmtPct(annualizedByLabel.LONG.sigma).padStart(8)}
+           CHOP     ${fmtPct(annualizedByLabel.CHOP.mu).padStart(8)}      ${fmtPct(annualizedByLabel.CHOP.sigma).padStart(8)}
+           SHORT    ${fmtPct(annualizedByLabel.SHORT.mu).padStart(8)}      ${fmtPct(annualizedByLabel.SHORT.sigma).padStart(8)}
+
+<span class="h">Daily figures</span>LONG  μ=${(annualizedByLabel.LONG.muDaily*100).toFixed(3)}%, σ=${(annualizedByLabel.LONG.sigmaDaily*100).toFixed(3)}%
+CHOP  μ=${(annualizedByLabel.CHOP.muDaily*100).toFixed(3)}%, σ=${(annualizedByLabel.CHOP.sigmaDaily*100).toFixed(3)}%
+SHORT μ=${(annualizedByLabel.SHORT.muDaily*100).toFixed(3)}%, σ=${(annualizedByLabel.SHORT.sigmaDaily*100).toFixed(3)}%</div>
+        </details>
+
+        <details class="metric">
+          <summary>
+            <span class="label">Transition matrix A</span>
+            <span class="val">stay ${(stayProb*100).toFixed(0)}%</span>
+            <span class="delta">in ${currentState}</span>
+            <span></span>
+            <span class="chev">▸</span>
+          </summary>
+          <div class="metric-calc"><span class="h">A[i][j] = P(state_{t+1} = j | state_t = i)</span>
+Rows sum to 100%. Diagonal entries (highlighted) measure regime persistence.
+
+${transitionTable()}
+
+<span class="h">Interpretation</span>High diagonal values mean regimes are persistent — once the model labels today LONG, tomorrow is also likely LONG. Off-diagonals measure regime switching rates. P(stay in current state | currently ${currentState}) = ${(stayProb*100).toFixed(1)}%.</div>
         </details>
       </div>
     </div>
