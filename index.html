@@ -1,1 +1,1081 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QQQ HMM — 3-State Regime Model</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --panel: #111111;
+    --panel-2: #0d0d0d;
+    --border: #1f1f1f;
+    --text: #e8e6e1;
+    --muted: #6b6862;
+    --dim: #3a3835;
+    --green: #5fb878;
+    --red: #d65a5a;
+    --gray: #8a8680;
+    --accent: #d4a04a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    background: var(--bg); color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px; line-height: 1.5; min-height: 100vh;
+  }
+  body { padding: 24px; max-width: 1400px; margin: 0 auto; }
+  a { color: var(--accent); text-decoration: none; }
 
+  .header {
+    display: flex; justify-content: space-between; align-items: flex-end;
+    border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 24px;
+    flex-wrap: wrap; gap: 16px;
+  }
+  .header-left h1 {
+    font-family: 'Fraunces', serif; font-weight: 300; font-size: 28px;
+    letter-spacing: -0.02em;
+  }
+  .header-left .sub {
+    font-size: 11px; color: var(--muted); text-transform: uppercase;
+    letter-spacing: 0.15em; margin-top: 4px;
+  }
+  .header-right { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .price-block { text-align: right; }
+  .price-block .price { font-family: 'Fraunces', serif; font-size: 24px; font-weight: 500; }
+  .price-block .change { font-size: 12px; }
+  .change.up { color: var(--green); }
+  .change.down { color: var(--red); }
+  .btn {
+    background: transparent; border: 1px solid var(--border); color: var(--text);
+    padding: 8px 14px; font-family: inherit; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.15em; cursor: pointer;
+    transition: all 0.2s;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .timestamp { font-size: 10px; color: var(--muted); }
+
+  .loader {
+    position: fixed; inset: 0; background: rgba(10,10,10,0.92);
+    z-index: 100; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; padding: 24px;
+  }
+  .loader.hidden { display: none; }
+  .loader-title {
+    font-family: 'Fraunces', serif; font-size: 24px; font-weight: 300;
+    letter-spacing: -0.01em; margin-bottom: 8px;
+  }
+  .loader-sub {
+    font-size: 11px; color: var(--muted); text-transform: uppercase;
+    letter-spacing: 0.2em; margin-bottom: 28px;
+  }
+  .loader-stage { font-size: 12px; color: var(--text); margin-bottom: 12px; min-height: 18px; }
+  .progress-wrap {
+    width: 380px; max-width: 80vw; height: 4px; background: var(--border);
+    border-radius: 2px; overflow: hidden;
+  }
+  .progress-bar {
+    height: 100%; width: 0%; background: var(--accent);
+    transition: width 0.15s linear;
+  }
+  .loader-detail {
+    font-size: 10px; color: var(--muted); margin-top: 14px;
+    text-transform: uppercase; letter-spacing: 0.15em; min-height: 14px;
+  }
+
+  .grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;
+  }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: var(--panel); border: 1px solid var(--border); padding: 20px;
+  }
+  .panel.full { grid-column: 1 / -1; }
+  .panel-title {
+    font-size: 10px; color: var(--muted); text-transform: uppercase;
+    letter-spacing: 0.2em; margin-bottom: 16px; border-bottom: 1px solid var(--border);
+    padding-bottom: 10px; display: flex; justify-content: space-between; align-items: center;
+  }
+  .panel-title .hint { font-size: 9px; color: var(--dim); letter-spacing: 0.1em; }
+
+  .signal-state {
+    font-family: 'Fraunces', serif; font-size: 56px; font-weight: 500;
+    letter-spacing: -0.02em; line-height: 1; margin: 8px 0 12px;
+  }
+  .signal-state.long { color: var(--green); }
+  .signal-state.chop { color: var(--gray); }
+  .signal-state.short { color: var(--red); }
+  .signal-conf { font-size: 12px; color: var(--text); margin-bottom: 18px; }
+  .prob-bars { margin-bottom: 18px; }
+  .prob-row {
+    display: grid; grid-template-columns: 60px 1fr 50px;
+    align-items: center; gap: 10px; margin-bottom: 8px; font-size: 11px;
+  }
+  .prob-row .pname { letter-spacing: 0.15em; }
+  .prob-row.long .pname { color: var(--green); }
+  .prob-row.short .pname { color: var(--red); }
+  .prob-row.chop .pname { color: var(--gray); }
+  .prob-track { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+  .prob-fill { height: 100%; transition: width 0.3s; }
+  .prob-fill.long { background: var(--green); }
+  .prob-fill.short { background: var(--red); }
+  .prob-fill.chop { background: var(--gray); }
+  .prob-row .pval { text-align: right; color: var(--muted); }
+
+  .signal-meta {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+    padding-top: 16px; border-top: 1px solid var(--border);
+  }
+  .signal-meta .label {
+    font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.15em;
+  }
+  .signal-meta .value {
+    font-size: 16px; color: var(--text); margin-top: 4px;
+    font-family: 'Fraunces', serif; font-weight: 500;
+  }
+
+  .chart-wrap { position: relative; height: 380px; }
+  .chart-wrap.short-h { height: 200px; }
+
+  .params-table {
+    width: 100%; border-collapse: collapse; font-size: 12px;
+  }
+  .params-table th, .params-table td {
+    text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border);
+  }
+  .params-table th {
+    color: var(--muted); font-weight: 400; font-size: 10px;
+    text-transform: uppercase; letter-spacing: 0.15em;
+  }
+  .params-table td.num { font-variant-numeric: tabular-nums; text-align: right; }
+  .params-table .pill {
+    display: inline-block; padding: 2px 8px; font-size: 10px;
+    letter-spacing: 0.12em; text-transform: uppercase;
+  }
+  .pill.long { color: var(--green); border: 1px solid var(--green); }
+  .pill.chop { color: var(--gray); border: 1px solid var(--gray); }
+  .pill.short { color: var(--red); border: 1px solid var(--red); }
+
+  .tm {
+    display: grid; grid-template-columns: 80px repeat(3, 1fr); gap: 4px;
+    font-size: 12px;
+  }
+  .tm .hdr {
+    font-size: 9px; color: var(--muted); text-transform: uppercase;
+    letter-spacing: 0.15em; padding: 6px; text-align: center;
+  }
+  .tm .rowlbl {
+    font-size: 9px; color: var(--muted); text-transform: uppercase;
+    letter-spacing: 0.15em; padding: 6px; text-align: right; align-self: center;
+  }
+  .tm .cell {
+    padding: 12px 6px; text-align: center; font-variant-numeric: tabular-nums;
+    border: 1px solid var(--border); color: var(--text);
+  }
+  .tm-legend {
+    font-size: 10px; color: var(--muted); margin-top: 10px;
+    text-transform: uppercase; letter-spacing: 0.12em;
+  }
+
+  .data-controls {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 12px; gap: 12px; flex-wrap: wrap;
+  }
+  .data-controls input {
+    background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+    padding: 6px 10px; font-family: inherit; font-size: 12px; min-width: 200px;
+  }
+  .data-controls input:focus { outline: none; border-color: var(--accent); }
+  .data-scroll { max-height: 420px; overflow-y: auto; border: 1px solid var(--border); }
+  .data-scroll table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  .data-scroll th {
+    position: sticky; top: 0; background: var(--panel);
+    text-align: right; padding: 8px 10px; border-bottom: 1px solid var(--border);
+    font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.15em;
+    font-weight: 400;
+  }
+  .data-scroll th:first-child, .data-scroll td:first-child { text-align: left; }
+  .data-scroll td {
+    text-align: right; padding: 6px 10px; border-bottom: 1px solid #161616;
+    font-variant-numeric: tabular-nums;
+  }
+  .data-scroll tr:hover td { background: #151515; }
+
+  .note {
+    background: var(--panel-2); border-left: 2px solid var(--dim);
+    padding: 12px 14px; margin-top: 14px; font-size: 11px; color: var(--muted);
+    line-height: 1.7;
+  }
+  .note strong { color: var(--text); }
+
+  details > summary {
+    cursor: pointer; color: var(--muted); font-size: 10px;
+    text-transform: uppercase; letter-spacing: 0.15em; padding: 8px 0;
+    list-style: none;
+  }
+  details > summary::-webkit-details-marker { display: none; }
+  details > summary:hover { color: var(--accent); }
+  details[open] > summary { color: var(--text); }
+
+  .controls-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;
+  }
+  @media (max-width: 700px) { .controls-grid { grid-template-columns: 1fr 1fr; } }
+  .ctl label {
+    display: block; font-size: 9px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.15em; margin-bottom: 6px;
+  }
+  .ctl select, .ctl input {
+    width: 100%; background: var(--panel-2); border: 1px solid var(--border);
+    color: var(--text); padding: 8px 10px; font-family: inherit; font-size: 12px;
+  }
+  .ctl select:focus, .ctl input:focus { outline: none; border-color: var(--accent); }
+
+  .err {
+    color: var(--red); font-size: 12px; padding: 10px;
+    border: 1px solid var(--red); margin-bottom: 16px;
+  }
+
+  .training-log {
+    max-height: 240px; overflow-y: auto; background: var(--panel-2);
+    border: 1px solid var(--border); padding: 10px 12px;
+    font-size: 10px; line-height: 1.6; color: var(--muted);
+    white-space: pre-wrap;
+  }
+  .training-log .ll { color: var(--text); }
+
+  footer {
+    margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--border);
+    font-size: 10px; color: var(--muted); text-align: center;
+    text-transform: uppercase; letter-spacing: 0.15em;
+  }
+</style>
+</head>
+<body>
+
+<div class="loader" id="loader">
+  <div class="loader-title">Training HMM…</div>
+  <div class="loader-sub">3-state regime model · QQQ · 2y daily</div>
+  <div class="loader-stage" id="loader-stage">Fetching data…</div>
+  <div class="progress-wrap"><div class="progress-bar" id="progress-bar"></div></div>
+  <div class="loader-detail" id="loader-detail">&nbsp;</div>
+</div>
+
+<div class="header">
+  <div class="header-left">
+    <h1>QQQ · Hidden Markov Model</h1>
+    <div class="sub">3-state regime classifier · trained in-browser</div>
+  </div>
+  <div class="header-right">
+    <div class="price-block">
+      <div class="price" id="price">—</div>
+      <div class="change" id="change">—</div>
+    </div>
+    <button class="btn" id="retrain-btn">Retrain</button>
+  </div>
+</div>
+
+<div id="error-slot"></div>
+
+<div class="panel full" style="margin-bottom: 20px;">
+  <div class="panel-title">Model controls <span class="hint">change &amp; retrain</span></div>
+  <div class="controls-grid">
+    <div class="ctl">
+      <label>History</label>
+      <select id="ctl-range">
+        <option value="1y">1 year</option>
+        <option value="2y" selected>2 years</option>
+        <option value="5y">5 years</option>
+        <option value="10y">10 years</option>
+      </select>
+    </div>
+    <div class="ctl">
+      <label>Features</label>
+      <select id="ctl-features">
+        <option value="ret">Returns only</option>
+        <option value="ret_vol" selected>Returns + 5d vol</option>
+      </select>
+    </div>
+    <div class="ctl">
+      <label>EM iterations (max)</label>
+      <input type="number" id="ctl-iters" value="80" min="10" max="500">
+    </div>
+    <div class="ctl">
+      <label>Random restarts</label>
+      <input type="number" id="ctl-restarts" value="5" min="1" max="20">
+    </div>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="panel">
+    <div class="panel-title">Current regime <span class="hint">latest bar</span></div>
+    <div class="signal-state" id="signal-state">—</div>
+    <div class="signal-conf" id="signal-conf">&nbsp;</div>
+    <div class="prob-bars" id="prob-bars"></div>
+    <div class="signal-meta">
+      <div>
+        <div class="label">Last bar</div>
+        <div class="value" id="meta-date">—</div>
+      </div>
+      <div>
+        <div class="label">Trained</div>
+        <div class="value" id="meta-trained">—</div>
+      </div>
+      <div>
+        <div class="label">Bars used</div>
+        <div class="value" id="meta-bars">—</div>
+      </div>
+      <div>
+        <div class="label">Log-likelihood</div>
+        <div class="value" id="meta-ll">—</div>
+      </div>
+    </div>
+    <div class="note">
+      <strong>What this means.</strong> The model assigns every day a hidden "regime" — LONG (uptrend), SHORT (downtrend), or CHOP (sideways) — based purely on the pattern of daily returns and short-term volatility. The probabilities below sum to 100% and reflect the model's smoothed belief about <em>today's</em> regime given everything it has seen.
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">QQQ price · regime shading <span class="hint">hover for detail</span></div>
+    <div class="chart-wrap"><canvas id="price-chart"></canvas></div>
+    <div class="note">
+      <strong>Reading the chart.</strong> Background bands show the model's <em>hard</em> regime label per day (the Viterbi path — the single most likely sequence of regimes). The line is QQQ adjusted close.
+    </div>
+  </div>
+</div>
+
+<div class="panel full" style="margin-bottom: 20px;">
+  <div class="panel-title">Regime probability ribbon <span class="hint">P(state) per day · smoothed</span></div>
+  <div class="chart-wrap short-h"><canvas id="prob-chart"></canvas></div>
+  <div class="note">
+    <strong>Why this matters.</strong> The hard label flips abruptly, but conviction shifts gradually. When LONG (green) starts falling and CHOP (gray) rises, the model is losing confidence in the trend before the label flips. This is the model's "soft" view.
+  </div>
+</div>
+
+<div class="grid">
+  <div class="panel">
+    <div class="panel-title">Learned emission parameters <span class="hint">per-state distribution</span></div>
+    <table class="params-table" id="params-table">
+      <thead>
+        <tr>
+          <th>State</th>
+          <th class="num">Mean return (daily)</th>
+          <th class="num">Vol of return</th>
+          <th class="num">Mean 5d vol</th>
+          <th class="num">Vol of 5d vol</th>
+          <th class="num">Stickiness</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <div class="note">
+      <strong>What's here.</strong> For each hidden state the model learned a Gaussian distribution over the observed features. <strong>Mean return</strong> is the typical daily log-return when in that regime; <strong>vol</strong> is the standard deviation. <strong>Stickiness</strong> = expected duration in days before the regime switches, computed as 1 / (1 − P(stay)).
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">Transition matrix <span class="hint">today → tomorrow</span></div>
+    <div class="tm" id="tm">
+      <div></div>
+      <div class="hdr">→ LONG</div><div class="hdr">→ SHORT</div><div class="hdr">→ CHOP</div>
+      <div class="rowlbl">LONG →</div><div class="cell" id="tm-LL">—</div><div class="cell" id="tm-LS">—</div><div class="cell" id="tm-LC">—</div>
+      <div class="rowlbl">SHORT →</div><div class="cell" id="tm-SL">—</div><div class="cell" id="tm-SS">—</div><div class="cell" id="tm-SC">—</div>
+      <div class="rowlbl">CHOP →</div><div class="cell" id="tm-CL">—</div><div class="cell" id="tm-CS">—</div><div class="cell" id="tm-CC">—</div>
+    </div>
+    <div class="tm-legend">rows = today · cols = tomorrow · each row sums to 1.00</div>
+    <div class="note">
+      <strong>Reading the matrix.</strong> The diagonal tells you how persistent each regime is. High diagonal numbers (e.g. 0.95) mean the regime tends to last; low numbers mean it flips often. Off-diagonal entries are the chance of switching to a different regime on the next bar.
+    </div>
+  </div>
+</div>
+
+<details class="panel full" style="margin-bottom: 20px;">
+  <summary class="panel-title" style="border: none; padding: 0; margin: 0;">Training diagnostics ▸</summary>
+  <div style="margin-top: 16px;">
+    <div id="training-summary" style="font-size: 12px; color: var(--muted); margin-bottom: 12px;"></div>
+    <div class="training-log" id="training-log"></div>
+    <div class="note">
+      <strong>What's here.</strong> Each line is one EM (Expectation-Maximization) iteration showing the model's log-likelihood — its "fit score" for explaining the observed data. Higher is better. We try several random starting points (restarts) and keep the best fit, because EM can land in local optima.
+    </div>
+  </div>
+</details>
+
+<div class="panel full" style="margin-bottom: 20px;">
+  <div class="panel-title">Per-bar data &amp; inference <span class="hint">every input &amp; output</span></div>
+  <div class="data-controls">
+    <input type="text" id="data-filter" placeholder="Filter by date or state (e.g. 2024 or LONG)">
+    <button class="btn" id="csv-btn">Download CSV</button>
+  </div>
+  <div class="data-scroll">
+    <table id="data-table">
+      <thead>
+        <tr>
+          <th>Date</th><th>Close</th><th>Log return</th><th>5d vol</th>
+          <th>P(LONG)</th><th>P(SHORT)</th><th>P(CHOP)</th><th>Regime</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <div class="note">
+    <strong>Transparency.</strong> This is every input the model saw and every output it produced. Log return = ln(Close / PrevClose). 5d vol = standard deviation of the prior 5 log returns. P(state) = smoothed posterior probability from forward-backward. Regime = Viterbi hard label.
+  </div>
+</div>
+
+<details class="panel full" style="margin-bottom: 20px;">
+  <summary class="panel-title" style="border: none; padding: 0; margin: 0;">How the model works ▸</summary>
+  <div style="margin-top: 16px; font-size: 12px; line-height: 1.8; color: var(--text);">
+    <p style="margin-bottom: 12px;"><strong>The idea.</strong> A Hidden Markov Model (HMM) assumes the market is always in one of a few invisible "regimes" (here: LONG, SHORT, CHOP), and each regime produces returns with a characteristic mean and volatility. We can't observe the regime directly — only the returns — so we infer it.</p>
+    <p style="margin-bottom: 12px;"><strong>The math, in three pieces.</strong></p>
+    <ol style="margin-left: 20px; margin-bottom: 12px;">
+      <li><strong>Initial probabilities π</strong> — chance the chain starts in each state.</li>
+      <li><strong>Transition matrix A</strong> — chance of moving from state i to state j between bars.</li>
+      <li><strong>Emission distributions</strong> — each state has a Gaussian over [log return, 5d vol] (diagonal covariance, so the two features are treated as conditionally independent given the state).</li>
+    </ol>
+    <p style="margin-bottom: 12px;"><strong>Training.</strong> We run <strong>Baum-Welch</strong>, an Expectation-Maximization algorithm:
+      (E-step) given current parameters, compute the probability of being in each state on each day via the forward-backward algorithm;
+      (M-step) re-estimate π, A, and the Gaussians using those probabilities as soft assignments. Repeat until log-likelihood stops improving meaningfully. We do this from several random initializations and keep the best fit.</p>
+    <p style="margin-bottom: 12px;"><strong>Decoding.</strong> The <strong>Viterbi algorithm</strong> finds the single most likely sequence of regimes (the colored bands on the chart). The probability ribbon shows the softer per-day posteriors.</p>
+    <p style="margin-bottom: 12px;"><strong>Labeling.</strong> The three trained states are anonymous numbers; we relabel by mean return — highest = LONG, lowest = SHORT, middle = CHOP — so the colors stay consistent across retrainings.</p>
+    <p><strong>What it is not.</strong> The regime is descriptive — it explains what likely happened, not what will happen next. The most recent label can revise as new bars arrive (the model re-smooths the whole history). This is not investment advice.</p>
+  </div>
+</details>
+
+<footer>
+  Trained in your browser · no server inference · open-source on
+  <a href="https://github.com/hansenvalueinvesting/qqq-macroswing">GitHub</a>
+</footer>
+
+<script>
+// =====================================================================
+// Data
+// =====================================================================
+const YAHOO_PROXY = 'https://qqq-macroswing.gulagmonke.workers.dev/?url=';
+
+async function fetchQQQ(range) {
+  const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/QQQ?range=${range}&interval=1d`;
+  const url = YAHOO_PROXY + encodeURIComponent(yahooUrl);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('Data fetch failed (' + res.status + ')');
+  const json = await res.json();
+  const result = json.chart && json.chart.result && json.chart.result[0];
+  if (!result) throw new Error('Bad data shape from Yahoo');
+  const ts = result.timestamp;
+  const closes = result.indicators.quote[0].close;
+  const adj = result.indicators.adjclose && result.indicators.adjclose[0].adjclose;
+  const series = [];
+  for (let i = 0; i < ts.length; i++) {
+    const c = (adj && adj[i] != null) ? adj[i] : closes[i];
+    if (c == null) continue;
+    series.push({ date: new Date(ts[i] * 1000), close: c });
+  }
+  return series;
+}
+
+// =====================================================================
+// Features
+// =====================================================================
+function buildFeatures(series, useVol) {
+  const rows = [];
+  for (let i = 1; i < series.length; i++) {
+    const r = Math.log(series[i].close / series[i-1].close);
+    rows.push({ date: series[i].date, close: series[i].close, ret: r, vol5: null });
+  }
+  const W = 5;
+  for (let i = 0; i < rows.length; i++) {
+    if (i < W) { rows[i].vol5 = null; continue; }
+    let m = 0;
+    for (let k = i - W; k < i; k++) m += rows[k].ret;
+    m /= W;
+    let v = 0;
+    for (let k = i - W; k < i; k++) v += (rows[k].ret - m) ** 2;
+    rows[i].vol5 = Math.sqrt(v / (W - 1));
+  }
+  const clean = rows.filter(r => r.vol5 != null);
+  const X = clean.map(r => useVol ? [r.ret, r.vol5] : [r.ret]);
+  return { rows: clean, X };
+}
+
+function standardize(X) {
+  const T = X.length, D = X[0].length;
+  const mu = new Array(D).fill(0), sd = new Array(D).fill(0);
+  for (let t = 0; t < T; t++) for (let d = 0; d < D; d++) mu[d] += X[t][d];
+  for (let d = 0; d < D; d++) mu[d] /= T;
+  for (let t = 0; t < T; t++) for (let d = 0; d < D; d++) sd[d] += (X[t][d] - mu[d]) ** 2;
+  for (let d = 0; d < D; d++) sd[d] = Math.sqrt(sd[d] / T) || 1;
+  const Z = X.map(row => row.map((v, d) => (v - mu[d]) / sd[d]));
+  return { Z, mu, sd };
+}
+
+// =====================================================================
+// HMM core (diagonal Gaussian emissions, log-space)
+// =====================================================================
+const LOG_2PI = Math.log(2 * Math.PI);
+const SIGMA_FLOOR = 1e-3;
+
+function logsumexp(arr) {
+  let m = -Infinity;
+  for (let i = 0; i < arr.length; i++) if (arr[i] > m) m = arr[i];
+  if (m === -Infinity) return -Infinity;
+  let s = 0;
+  for (let i = 0; i < arr.length; i++) s += Math.exp(arr[i] - m);
+  return m + Math.log(s);
+}
+
+function logGaussian(x, mu, sig2) {
+  let lp = 0;
+  for (let d = 0; d < x.length; d++) {
+    const diff = x[d] - mu[d];
+    lp += -0.5 * (LOG_2PI + Math.log(sig2[d]) + (diff * diff) / sig2[d]);
+  }
+  return lp;
+}
+
+function mulberry32(seed) {
+  return function() {
+    seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function initHMM(X, K, rng) {
+  const T = X.length, D = X[0].length;
+  const idx = [];
+  while (idx.length < K) {
+    const r = Math.floor(rng() * T);
+    if (!idx.includes(r)) idx.push(r);
+  }
+  const mu = idx.map(i => X[i].slice());
+  const globMu = new Array(D).fill(0);
+  for (let t = 0; t < T; t++) for (let d = 0; d < D; d++) globMu[d] += X[t][d];
+  for (let d = 0; d < D; d++) globMu[d] /= T;
+  const globVar = new Array(D).fill(0);
+  for (let t = 0; t < T; t++) for (let d = 0; d < D; d++) globVar[d] += (X[t][d] - globMu[d]) ** 2;
+  for (let d = 0; d < D; d++) globVar[d] = Math.max(globVar[d] / T, SIGMA_FLOOR * SIGMA_FLOOR);
+  const sig2 = Array.from({length: K}, () => globVar.slice());
+  const pi = new Array(K).fill(1 / K);
+  const A = Array.from({length: K}, () => new Array(K).fill((1 - 0.9) / (K - 1)));
+  for (let i = 0; i < K; i++) A[i][i] = 0.9;
+  return { pi, A, mu, sig2 };
+}
+
+function forwardBackward(X, model) {
+  const T = X.length, K = model.pi.length;
+  const logB = Array.from({length: T}, () => new Array(K));
+  for (let t = 0; t < T; t++)
+    for (let k = 0; k < K; k++)
+      logB[t][k] = logGaussian(X[t], model.mu[k], model.sig2[k]);
+
+  const logA = model.A.map(row => row.map(v => Math.log(Math.max(v, 1e-300))));
+  const logPi = model.pi.map(v => Math.log(Math.max(v, 1e-300)));
+
+  const logAlpha = Array.from({length: T}, () => new Array(K));
+  for (let k = 0; k < K; k++) logAlpha[0][k] = logPi[k] + logB[0][k];
+  for (let t = 1; t < T; t++) {
+    for (let k = 0; k < K; k++) {
+      const tmp = new Array(K);
+      for (let j = 0; j < K; j++) tmp[j] = logAlpha[t-1][j] + logA[j][k];
+      logAlpha[t][k] = logsumexp(tmp) + logB[t][k];
+    }
+  }
+  const logLik = logsumexp(logAlpha[T-1]);
+
+  const logBeta = Array.from({length: T}, () => new Array(K).fill(0));
+  for (let t = T - 2; t >= 0; t--) {
+    for (let k = 0; k < K; k++) {
+      const tmp = new Array(K);
+      for (let j = 0; j < K; j++)
+        tmp[j] = logA[k][j] + logB[t+1][j] + logBeta[t+1][j];
+      logBeta[t][k] = logsumexp(tmp);
+    }
+  }
+
+  const gamma = Array.from({length: T}, () => new Array(K));
+  for (let t = 0; t < T; t++) {
+    const norm = logsumexp(logAlpha[t].map((v, k) => v + logBeta[t][k]));
+    for (let k = 0; k < K; k++)
+      gamma[t][k] = Math.exp(logAlpha[t][k] + logBeta[t][k] - norm);
+  }
+
+  const xiSum = Array.from({length: K}, () => new Array(K).fill(0));
+  for (let t = 0; t < T - 1; t++) {
+    const tmp = [];
+    for (let j = 0; j < K; j++)
+      for (let k = 0; k < K; k++)
+        tmp.push(logAlpha[t][j] + logA[j][k] + logB[t+1][k] + logBeta[t+1][k]);
+    const norm = logsumexp(tmp);
+    for (let j = 0; j < K; j++)
+      for (let k = 0; k < K; k++) {
+        const lx = logAlpha[t][j] + logA[j][k] + logB[t+1][k] + logBeta[t+1][k] - norm;
+        xiSum[j][k] += Math.exp(lx);
+      }
+  }
+
+  return { gamma, xiSum, logLik };
+}
+
+function mStep(X, gamma, xiSum) {
+  const T = X.length, K = gamma[0].length, D = X[0].length;
+  const pi = gamma[0].slice();
+  const A = Array.from({length: K}, () => new Array(K));
+  for (let j = 0; j < K; j++) {
+    let rowSum = 0;
+    for (let k = 0; k < K; k++) rowSum += xiSum[j][k];
+    if (rowSum < 1e-12) rowSum = 1e-12;
+    for (let k = 0; k < K; k++) A[j][k] = xiSum[j][k] / rowSum;
+  }
+  const mu = Array.from({length: K}, () => new Array(D).fill(0));
+  const sig2 = Array.from({length: K}, () => new Array(D).fill(0));
+  const gSum = new Array(K).fill(0);
+  for (let t = 0; t < T; t++) for (let k = 0; k < K; k++) gSum[k] += gamma[t][k];
+  for (let k = 0; k < K; k++) {
+    const gs = Math.max(gSum[k], 1e-12);
+    for (let t = 0; t < T; t++)
+      for (let d = 0; d < D; d++)
+        mu[k][d] += gamma[t][k] * X[t][d];
+    for (let d = 0; d < D; d++) mu[k][d] /= gs;
+    for (let t = 0; t < T; t++)
+      for (let d = 0; d < D; d++) {
+        const diff = X[t][d] - mu[k][d];
+        sig2[k][d] += gamma[t][k] * diff * diff;
+      }
+    for (let d = 0; d < D; d++)
+      sig2[k][d] = Math.max(sig2[k][d] / gs, SIGMA_FLOOR * SIGMA_FLOOR);
+  }
+  return { pi, A, mu, sig2 };
+}
+
+function viterbi(X, model) {
+  const T = X.length, K = model.pi.length;
+  const logA = model.A.map(row => row.map(v => Math.log(Math.max(v, 1e-300))));
+  const logPi = model.pi.map(v => Math.log(Math.max(v, 1e-300)));
+  const delta = Array.from({length: T}, () => new Array(K));
+  const psi = Array.from({length: T}, () => new Array(K));
+  for (let k = 0; k < K; k++)
+    delta[0][k] = logPi[k] + logGaussian(X[0], model.mu[k], model.sig2[k]);
+  for (let t = 1; t < T; t++) {
+    for (let k = 0; k < K; k++) {
+      let bestVal = -Infinity, bestArg = 0;
+      for (let j = 0; j < K; j++) {
+        const v = delta[t-1][j] + logA[j][k];
+        if (v > bestVal) { bestVal = v; bestArg = j; }
+      }
+      delta[t][k] = bestVal + logGaussian(X[t], model.mu[k], model.sig2[k]);
+      psi[t][k] = bestArg;
+    }
+  }
+  const path = new Array(T);
+  let bestVal = -Infinity, bestArg = 0;
+  for (let k = 0; k < K; k++) if (delta[T-1][k] > bestVal) { bestVal = delta[T-1][k]; bestArg = k; }
+  path[T-1] = bestArg;
+  for (let t = T - 2; t >= 0; t--) path[t] = psi[t+1][path[t+1]];
+  return path;
+}
+
+// =====================================================================
+// Training (non-blocking)
+// =====================================================================
+async function trainAsync(X, opts, onProgress) {
+  const { restarts, maxIters, tol, K } = opts;
+  let best = null;
+  const allLogs = [];
+
+  for (let r = 0; r < restarts; r++) {
+    const rng = mulberry32(1337 + r * 7919);
+    let model = initHMM(X, K, rng);
+    let prevLL = -Infinity;
+    const log = [];
+    let converged = false;
+    for (let it = 0; it < maxIters; it++) {
+      const fb = forwardBackward(X, model);
+      log.push(fb.logLik);
+      const overallStep = r * maxIters + it + 1;
+      const overallTotal = restarts * maxIters;
+      onProgress({
+        pct: overallStep / overallTotal,
+        detail: `restart ${r+1}/${restarts} · iter ${it+1} · log-lik ${fb.logLik.toFixed(3)}`
+      });
+      if (it > 0 && Math.abs(fb.logLik - prevLL) < tol) {
+        if (!best || fb.logLik > best.logLik)
+          best = { model, logLik: fb.logLik, iters: it + 1, restart: r, log: log.slice() };
+        converged = true;
+        break;
+      }
+      prevLL = fb.logLik;
+      model = mStep(X, fb.gamma, fb.xiSum);
+      await new Promise(res => setTimeout(res, 0));
+    }
+    if (!converged) {
+      // Take one final evaluation
+      const fb = forwardBackward(X, model);
+      log.push(fb.logLik);
+      if (!best || fb.logLik > best.logLik)
+        best = { model, logLik: fb.logLik, iters: maxIters, restart: r, log: log.slice() };
+    }
+    allLogs.push({ restart: r, log });
+  }
+  const fb = forwardBackward(X, best.model);
+  const path = viterbi(X, best.model);
+  return { ...best, gamma: fb.gamma, path, allLogs };
+}
+
+// =====================================================================
+// Relabel
+// =====================================================================
+function relabel(result, featureMu, featureSd) {
+  const K = result.model.mu.length;
+  const meansRetReal = result.model.mu.map(m => m[0] * featureSd[0] + featureMu[0]);
+  const sorted = meansRetReal.map((m, k) => ({ m, k })).sort((a, b) => b.m - a.m);
+  const labelOf = new Array(K);
+  labelOf[sorted[0].k] = 'LONG';
+  labelOf[sorted[K-1].k] = 'SHORT';
+  labelOf[sorted[1].k] = 'CHOP';
+  return labelOf;
+}
+
+// =====================================================================
+// Render
+// =====================================================================
+const COLORS = { LONG: '#5fb878', SHORT: '#d65a5a', CHOP: '#8a8680' };
+const BAND_ALPHA = { LONG: 'rgba(95, 184, 120, 0.10)', SHORT: 'rgba(214, 90, 90, 0.10)', CHOP: 'rgba(138, 134, 128, 0.08)' };
+
+let priceChart = null, probChart = null;
+let TRAINED = null;
+
+function setStage(stage, pct, detail) {
+  document.getElementById('loader-stage').textContent = stage;
+  document.getElementById('progress-bar').style.width = (Math.min(1, pct) * 100).toFixed(1) + '%';
+  document.getElementById('loader-detail').textContent = detail || '';
+}
+
+function showError(msg) {
+  document.getElementById('error-slot').innerHTML = `<div class="err">${msg}</div>`;
+}
+
+function fmtPct(x) { return (x * 100).toFixed(1) + '%'; }
+function fmtPct2(x) { return (x * 100).toFixed(2) + '%'; }
+
+function hexAlpha(hex, a) {
+  const h = hex.replace('#', '');
+  const r = parseInt(h.slice(0,2), 16);
+  const g = parseInt(h.slice(2,4), 16);
+  const b = parseInt(h.slice(4,6), 16);
+  return `rgba(${r},${g},${b},${a})`;
+}
+
+function buildRegimeBands(rows, states) {
+  const bands = [];
+  let start = 0;
+  for (let i = 1; i <= states.length; i++) {
+    if (i === states.length || states[i] !== states[start]) {
+      bands.push({ from: rows[start].date, to: rows[i-1].date, state: states[start] });
+      start = i;
+    }
+  }
+  return bands;
+}
+
+function renderResults({ rows, featureMu, featureSd, result, useVol, range, restarts }) {
+  const T = rows.length;
+  const labelOf = relabel(result, featureMu, featureSd);
+  const states = result.path.map(k => labelOf[k]);
+  const probByLabel = result.gamma.map(row => {
+    const o = { LONG: 0, SHORT: 0, CHOP: 0 };
+    for (let k = 0; k < row.length; k++) o[labelOf[k]] = row[k];
+    return o;
+  });
+
+  const last = rows[T - 1];
+  const prev = rows[T - 2];
+  const chgPct = (last.close / prev.close - 1) * 100;
+  document.getElementById('price').textContent = '$' + last.close.toFixed(2);
+  const chgEl = document.getElementById('change');
+  chgEl.textContent = (chgPct >= 0 ? '+' : '') + chgPct.toFixed(2) + '%';
+  chgEl.className = 'change ' + (chgPct >= 0 ? 'up' : 'down');
+
+  const today = states[T - 1];
+  const todayP = probByLabel[T - 1];
+  const ss = document.getElementById('signal-state');
+  ss.textContent = today;
+  ss.className = 'signal-state ' + today.toLowerCase();
+  document.getElementById('signal-conf').innerHTML =
+    `Confidence (smoothed posterior): <strong>${fmtPct(todayP[today])}</strong>`;
+  document.getElementById('prob-bars').innerHTML = ['LONG', 'SHORT', 'CHOP'].map(s => `
+    <div class="prob-row ${s.toLowerCase()}">
+      <div class="pname">${s}</div>
+      <div class="prob-track"><div class="prob-fill ${s.toLowerCase()}" style="width:${(todayP[s]*100).toFixed(1)}%"></div></div>
+      <div class="pval">${fmtPct(todayP[s])}</div>
+    </div>`).join('');
+  document.getElementById('meta-date').textContent = last.date.toISOString().slice(0,10);
+  document.getElementById('meta-trained').textContent = new Date().toISOString().slice(11,19) + ' UTC';
+  document.getElementById('meta-bars').textContent = String(T);
+  document.getElementById('meta-ll').textContent = result.logLik.toFixed(2);
+
+  // Params table
+  const D = result.model.mu[0].length;
+  const kFor = { LONG: null, SHORT: null, CHOP: null };
+  for (let k = 0; k < result.model.mu.length; k++) kFor[labelOf[k]] = k;
+  const order = ['LONG', 'CHOP', 'SHORT'];
+  document.querySelector('#params-table tbody').innerHTML = order.map(s => {
+    const k = kFor[s];
+    const muRet = result.model.mu[k][0] * featureSd[0] + featureMu[0];
+    const sdRet = Math.sqrt(result.model.sig2[k][0]) * featureSd[0];
+    let muVolCell = '—', sdVolCell = '—';
+    if (D >= 2) {
+      muVolCell = fmtPct2(result.model.mu[k][1] * featureSd[1] + featureMu[1]);
+      sdVolCell = fmtPct2(Math.sqrt(result.model.sig2[k][1]) * featureSd[1]);
+    }
+    const pStay = result.model.A[k][k];
+    const stick = 1 / Math.max(1e-9, 1 - pStay);
+    return `
+      <tr>
+        <td><span class="pill ${s.toLowerCase()}">${s}</span></td>
+        <td class="num">${fmtPct2(muRet)}</td>
+        <td class="num">${fmtPct2(sdRet)}</td>
+        <td class="num">${muVolCell}</td>
+        <td class="num">${sdVolCell}</td>
+        <td class="num">${stick.toFixed(1)} d</td>
+      </tr>`;
+  }).join('');
+
+  // Transition matrix
+  const tmIds = {
+    LONG: { LONG: 'tm-LL', SHORT: 'tm-LS', CHOP: 'tm-LC' },
+    SHORT: { LONG: 'tm-SL', SHORT: 'tm-SS', CHOP: 'tm-SC' },
+    CHOP: { LONG: 'tm-CL', SHORT: 'tm-CS', CHOP: 'tm-CC' },
+  };
+  for (const from of ['LONG','SHORT','CHOP']) {
+    const i = kFor[from];
+    for (const to of ['LONG','SHORT','CHOP']) {
+      const j = kFor[to];
+      const v = result.model.A[i][j];
+      const el = document.getElementById(tmIds[from][to]);
+      el.textContent = v.toFixed(3);
+      const intensity = Math.min(1, v);
+      const c = COLORS[to];
+      el.style.background = hexAlpha(c, 0.08 + 0.45 * intensity);
+      el.style.borderColor = hexAlpha(c, 0.35);
+    }
+  }
+
+  renderPriceChart(rows, states);
+  renderProbChart(rows, probByLabel);
+  renderDataTable(rows, probByLabel, states);
+
+  // Training log
+  const lines = [];
+  lines.push(`[best] restart=${result.restart+1}  iters=${result.iters}  log-likelihood=${result.logLik.toFixed(4)}`);
+  result.allLogs.forEach(({restart, log}) => {
+    lines.push(`\n-- restart ${restart+1} (${log.length} iterations) --`);
+    log.forEach((ll, i) => lines.push(`  iter ${String(i+1).padStart(3,' ')}: ${ll.toFixed(4)}`));
+  });
+  document.getElementById('training-log').textContent = lines.join('\n');
+  document.getElementById('training-summary').textContent =
+    `Range: ${range} · ${T} bars · features: ${useVol ? 'returns + 5d vol' : 'returns only'} · ${restarts} restart(s) · best log-likelihood ${result.logLik.toFixed(3)}`;
+
+  TRAINED = { rows, probByLabel, states };
+}
+
+function renderPriceChart(rows, states) {
+  const ctx = document.getElementById('price-chart');
+  if (priceChart) priceChart.destroy();
+  const data = rows.map(r => ({ x: r.date, y: r.close }));
+  const bands = buildRegimeBands(rows, states);
+  const bgPlugin = {
+    id: 'regimeBg',
+    beforeDatasetsDraw(chart) {
+      const { ctx, chartArea, scales } = chart;
+      if (!chartArea) return;
+      ctx.save();
+      for (const b of bands) {
+        const x0 = scales.x.getPixelForValue(b.from);
+        const x1 = scales.x.getPixelForValue(b.to);
+        ctx.fillStyle = BAND_ALPHA[b.state];
+        ctx.fillRect(x0, chartArea.top, Math.max(1, x1 - x0), chartArea.bottom - chartArea.top);
+      }
+      ctx.restore();
+    }
+  };
+  priceChart = new Chart(ctx, {
+    type: 'line',
+    data: { datasets: [{
+      label: 'QQQ', data,
+      borderColor: '#e8e6e1', borderWidth: 1.5, pointRadius: 0, tension: 0,
+    }]},
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: { type: 'time', time: { unit: 'month' },
+          grid: { color: '#1f1f1f' }, ticks: { color: '#6b6862', font: { size: 10 } } },
+        y: { grid: { color: '#1f1f1f' },
+          ticks: { color: '#6b6862', font: { size: 10 }, callback: v => '$' + v } }
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#0d0d0d', borderColor: '#1f1f1f', borderWidth: 1,
+          titleColor: '#e8e6e1', bodyColor: '#e8e6e1',
+          callbacks: {
+            label(ctx) {
+              const i = ctx.dataIndex;
+              const r = rows[i];
+              return [
+                `Close: $${r.close.toFixed(2)}`,
+                `Return: ${(r.ret*100).toFixed(2)}%`,
+                `Regime: ${states[i]}`
+              ];
+            }
+          }
+        }
+      }
+    },
+    plugins: [bgPlugin]
+  });
+}
+
+function renderProbChart(rows, probByLabel) {
+  const ctx = document.getElementById('prob-chart');
+  if (probChart) probChart.destroy();
+  const datasets = ['LONG', 'CHOP', 'SHORT'].map(s => ({
+    label: s,
+    data: rows.map((r, i) => ({ x: r.date, y: probByLabel[i][s] })),
+    backgroundColor: hexAlpha(COLORS[s], 0.55),
+    borderColor: COLORS[s],
+    borderWidth: 0, pointRadius: 0, fill: true, stack: 'p',
+  }));
+  probChart = new Chart(ctx, {
+    type: 'line',
+    data: { datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: { type: 'time', time: { unit: 'month' },
+          grid: { color: '#1f1f1f' }, ticks: { color: '#6b6862', font: { size: 10 } } },
+        y: { stacked: true, min: 0, max: 1,
+          grid: { color: '#1f1f1f' },
+          ticks: { color: '#6b6862', font: { size: 10 }, callback: v => (v*100).toFixed(0) + '%' } }
+      },
+      plugins: {
+        legend: { labels: { color: '#6b6862', font: { size: 10 }, boxWidth: 10 } },
+        tooltip: {
+          backgroundColor: '#0d0d0d', borderColor: '#1f1f1f', borderWidth: 1,
+          titleColor: '#e8e6e1', bodyColor: '#e8e6e1',
+          callbacks: { label(ctx) { return `${ctx.dataset.label}: ${(ctx.parsed.y*100).toFixed(1)}%`; } }
+        }
+      }
+    }
+  });
+}
+
+function renderDataTable(rows, probByLabel, states) {
+  const tbody = document.querySelector('#data-table tbody');
+  const frag = document.createDocumentFragment();
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const r = rows[i];
+    const p = probByLabel[i];
+    const s = states[i];
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${r.date.toISOString().slice(0,10)}</td>
+      <td>${r.close.toFixed(2)}</td>
+      <td>${(r.ret*100).toFixed(3)}%</td>
+      <td>${(r.vol5*100).toFixed(3)}%</td>
+      <td>${(p.LONG*100).toFixed(1)}%</td>
+      <td>${(p.SHORT*100).toFixed(1)}%</td>
+      <td>${(p.CHOP*100).toFixed(1)}%</td>
+      <td><span class="pill ${s.toLowerCase()}">${s}</span></td>
+    `;
+    tr.dataset.search = (r.date.toISOString().slice(0,10) + ' ' + s).toLowerCase();
+    frag.appendChild(tr);
+  }
+  tbody.innerHTML = '';
+  tbody.appendChild(frag);
+}
+
+document.getElementById('data-filter').addEventListener('input', e => {
+  const q = e.target.value.toLowerCase().trim();
+  document.querySelectorAll('#data-table tbody tr').forEach(tr => {
+    tr.style.display = !q || tr.dataset.search.includes(q) ? '' : 'none';
+  });
+});
+
+document.getElementById('csv-btn').addEventListener('click', () => {
+  if (!TRAINED) return;
+  const { rows, probByLabel, states } = TRAINED;
+  const lines = ['date,close,log_return,vol5,p_long,p_short,p_chop,regime'];
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i], p = probByLabel[i];
+    lines.push([
+      r.date.toISOString().slice(0,10),
+      r.close.toFixed(4),
+      r.ret.toFixed(6),
+      r.vol5.toFixed(6),
+      p.LONG.toFixed(4), p.SHORT.toFixed(4), p.CHOP.toFixed(4),
+      states[i]
+    ].join(','));
+  }
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'qqq-hmm.csv';
+  a.click();
+});
+
+// =====================================================================
+// Main
+// =====================================================================
+async function run() {
+  document.getElementById('loader').classList.remove('hidden');
+  document.getElementById('error-slot').innerHTML = '';
+  document.getElementById('retrain-btn').disabled = true;
+  try {
+    const range = document.getElementById('ctl-range').value;
+    const useVol = document.getElementById('ctl-features').value === 'ret_vol';
+    const maxIters = Math.max(10, Math.min(500, parseInt(document.getElementById('ctl-iters').value || '80')));
+    const restarts = Math.max(1, Math.min(20, parseInt(document.getElementById('ctl-restarts').value || '5')));
+
+    setStage('Fetching QQQ data…', 0.02, range);
+    const series = await fetchQQQ(range);
+    setStage('Building features…', 0.06, `${series.length} bars`);
+    await new Promise(r => setTimeout(r, 0));
+    const feats = buildFeatures(series, useVol);
+    const { Z, mu: featureMu, sd: featureSd } = standardize(feats.X);
+
+    setStage('Initializing HMM…', 0.08, `T=${Z.length}  D=${Z[0].length}  K=3`);
+    await new Promise(r => setTimeout(r, 0));
+
+    const result = await trainAsync(Z, { restarts, maxIters, tol: 1e-4, K: 3 },
+      ({pct, detail}) => setStage('EM training (Baum-Welch)…', 0.1 + 0.85 * pct, detail));
+
+    setStage('Decoding regimes…', 0.97, 'Viterbi');
+    await new Promise(r => setTimeout(r, 0));
+    renderResults({ rows: feats.rows, featureMu, featureSd, result, useVol, range, restarts });
+    setStage('Done.', 1, '');
+    await new Promise(r => setTimeout(r, 250));
+    document.getElementById('loader').classList.add('hidden');
+  } catch (e) {
+    console.error(e);
+    showError('Training failed: ' + (e && e.message ? e.message : String(e)));
+    document.getElementById('loader').classList.add('hidden');
+  } finally {
+    document.getElementById('retrain-btn').disabled = false;
+  }
+}
+
+document.getElementById('retrain-btn').addEventListener('click', run);
+run();
+</script>
+</body>
+</html>
