@@ -417,25 +417,24 @@ function smaSlope(smaArr, idx, window = 5) {
   return (perDay / curr) * 252;
 }
 
-function computeSignal(price, sma200, sma50, slope50Ann) {
-  if (sma200 == null || sma50 == null || slope50Ann == null) return null;
+function computeSignal(price, sma200, sma50, slope200Ann) {
+  if (sma200 == null || sma50 == null || slope200Ann == null) return null;
   const aboveSMA200 = price > sma200;
-  const sma50Rising = slope50Ann > SLOPE_DEAD_ZONE_ANN;
-  const sma50Falling = slope50Ann < -SLOPE_DEAD_ZONE_ANN;
-  if (aboveSMA200 && sma50Rising) {
-    return { state: 'LONG', reason: `QQQ ${((price/sma200 - 1)*100).toFixed(1)}% above 200-SMA, 50-SMA rising at ${(slope50Ann*100).toFixed(1)}% ann.` };
+  const sma50Up = sma50 > sma200; // proxy for 50-day sloping up relative to 200
+  if (aboveSMA200 && sma50Up) {
+    return { state: 'LONG', reason: `QQQ ${((price/sma200 - 1)*100).toFixed(1)}% above 200-SMA, 50-SMA above 200-SMA, slope ${(slope200Ann*100).toFixed(1)}% ann.` };
   }
-  if (!aboveSMA200 && sma50Falling) {
-    return { state: 'SHORT', reason: `QQQ ${((price/sma200 - 1)*100).toFixed(1)}% below 200-SMA, 50-SMA falling at ${(slope50Ann*100).toFixed(1)}% ann.` };
+  if (!aboveSMA200 && slope200Ann < -SLOPE_DEAD_ZONE_ANN) {
+    return { state: 'SHORT', reason: `QQQ ${((price/sma200 - 1)*100).toFixed(1)}% below 200-SMA, slope ${(slope200Ann*100).toFixed(1)}% ann. (confirmed downtrend).` };
   }
-  return { state: 'CHOP', reason: `QQQ ${((price/sma200 - 1)*100).toFixed(1)}% vs 200-SMA, 50-SMA slope ${(slope50Ann*100).toFixed(1)}% ann. (no confirmed trend).` };
+  return { state: 'CHOP', reason: `QQQ ${((price/sma200 - 1)*100).toFixed(1)}% vs 200-SMA, slope ${(slope200Ann*100).toFixed(1)}% ann. (no confirmed trend).` };
 }
 
 function buildStateSeries(data) {
   const closes = data.map(d => d.close);
   const sma200Arr = closes.map((_, i) => sma(closes, 200, i));
   const sma50Arr = closes.map((_, i) => sma(closes, 50, i));
-  const slopeArr = closes.map((_, i) => smaSlope(sma50Arr, i, 5));
+  const slopeArr = closes.map((_, i) => smaSlope(sma200Arr, i, 5));
   const states = closes.map((c, i) => {
     const sig = computeSignal(c, sma200Arr[i], sma50Arr[i], slopeArr[i]);
     return sig ? sig.state : null;
@@ -511,13 +510,13 @@ function render(data) {
 
   // Conditions
   const cond_above_200 = price > sma200;
-  const cond_sma50_rising = slope > SLOPE_DEAD_ZONE_ANN;
-  const cond_sma50_falling = slope < -SLOPE_DEAD_ZONE_ANN;
+  const cond_50_above_200 = sma50 > sma200;
+  const cond_slope_negative = slope < -SLOPE_DEAD_ZONE_ANN;
 
   // Calculation context for inline expandables
-  const sma50_prev = sma50Arr[last - 5];
-  const rule_long = cond_above_200 && cond_sma50_rising;
-  const rule_short = !cond_above_200 && cond_sma50_falling;
+  const sma200_prev = sma200Arr[last - 5];
+  const rule_long = cond_above_200 && cond_50_above_200;
+  const rule_short = !cond_above_200 && cond_slope_negative;
   const rule_chop = !rule_long && !rule_short;
   const ruleBadge = (passed, active) => active
     ? '<span class="badge active">active</span>'
@@ -560,7 +559,7 @@ function render(data) {
               <div class="conds">
                 ${yn(cond_above_200, `price > SMA200  (${fmtNum(price)} ${cond_above_200 ? '>' : '≤'} ${fmtNum(sma200)})`)}
                 &nbsp;·&nbsp;
-                ${yn(cond_sma50_rising, `50-SMA slope > +${(SLOPE_DEAD_ZONE_ANN*100).toFixed(0)}% ann.  (${fmtPct(slope)} ${cond_sma50_rising ? '>' : '≤'} ${fmtPct(SLOPE_DEAD_ZONE_ANN)})`)}
+                ${yn(cond_50_above_200, `SMA50 > SMA200  (${fmtNum(sma50)} ${cond_50_above_200 ? '>' : '≤'} ${fmtNum(sma200)})`)}
               </div>
             </div>
             <div class="rule-row">
@@ -571,7 +570,7 @@ function render(data) {
               <div class="conds">
                 ${yn(!cond_above_200, `price < SMA200  (${fmtNum(price)} ${!cond_above_200 ? '<' : '≥'} ${fmtNum(sma200)})`)}
                 &nbsp;·&nbsp;
-                ${yn(cond_sma50_falling, `50-SMA slope < −${(SLOPE_DEAD_ZONE_ANN*100).toFixed(0)}% ann.  (${fmtPct(slope)} ${cond_sma50_falling ? '<' : '≥'} ${fmtPct(-SLOPE_DEAD_ZONE_ANN)})`)}
+                ${yn(cond_slope_negative, `slope < −${(SLOPE_DEAD_ZONE_ANN*100).toFixed(0)}% ann.  (${fmtPct(slope)} ${cond_slope_negative ? '<' : '≥'} ${fmtPct(-SLOPE_DEAD_ZONE_ANN)})`)}
               </div>
             </div>
             <div class="rule-row">
@@ -627,43 +626,43 @@ function render(data) {
             <span class="label">50-day SMA</span>
             <span class="val">$${fmtNum(sma50)}</span>
             <span class="delta">${fmtPct(price/sma50 - 1)}</span>
-            <span></span>
+            <span class="check ${cond_50_above_200 ? 'yes' : 'no'}">${cond_50_above_200 ? '✓' : '✗'}</span>
             <span class="chev">▸</span>
           </summary>
           <div class="metric-calc"><span class="h">Definition</span><span class="c">SMA50[t] = mean(close[t−49 … t])</span>
 = sum of last 50 daily closes / 50
 = $${fmtNum(sma50)}
 
-<span class="h">Price vs SMA50</span><span class="c">price / SMA50 − 1</span>
-= ${fmtNum(price)} / ${fmtNum(sma50)} − 1
-= ${fmtPct(price/sma50 - 1)}
+<span class="h">SMA50 vs SMA200</span><span class="c">SMA50 / SMA200 − 1</span>
+= ${fmtNum(sma50)} / ${fmtNum(sma200)} − 1
+= ${fmtPct(sma50/sma200 - 1)}  (${cond_50_above_200 ? '50-SMA above 200-SMA' : '50-SMA below 200-SMA'})
 
-<span class="h">Used by</span>The 50-SMA itself is informational; its <em>slope</em> (next row) is what gates the LONG/SHORT rules.</div>
+<span class="h">Used by</span>LONG rule (SMA50 > SMA200)</div>
         </details>
 
         <details class="metric">
           <summary>
-            <span class="label">50-SMA slope (5d, ann.)</span>
+            <span class="label">200-SMA slope (5d, ann.)</span>
             <span class="val">${fmtPct(slope)}</span>
             <span class="delta">${Math.abs(slope) < SLOPE_DEAD_ZONE_ANN ? 'flat' : (slope > 0 ? 'rising' : 'falling')}</span>
-            <span class="check ${cond_sma50_rising ? 'yes' : (cond_sma50_falling ? 'no' : '')}">${cond_sma50_rising ? '↑' : (cond_sma50_falling ? '↓' : '—')}</span>
+            <span class="check ${cond_slope_negative ? 'no' : 'yes'}">${cond_slope_negative ? '↓' : '↑'}</span>
             <span class="chev">▸</span>
           </summary>
-          <div class="metric-calc"><span class="h">Method</span>Backward finite difference of the 50-SMA over a 5-bar window, expressed as an annualized % rate of change.
-<span class="c">slope = ((SMA50[t] − SMA50[t−5]) / 5) / SMA50[t] × 252</span>
+          <div class="metric-calc"><span class="h">Method</span>Backward finite difference of the 200-SMA over a 5-bar window, expressed as an annualized % rate of change.
+<span class="c">slope = ((SMA200[t] − SMA200[t−5]) / 5) / SMA200[t] × 252</span>
 
-<span class="h">Calculation</span>${sma50_prev != null
-  ? `SMA50[t]      = $${fmtNum(sma50)}
-SMA50[t−5]    = $${fmtNum(sma50_prev)}
-Δ over 5 days = $${fmtNum(sma50 - sma50_prev)}
-per-day       = $${fmtNum((sma50 - sma50_prev) / 5, 4)}
-÷ SMA50[t]    = ${fmtNum(((sma50 - sma50_prev) / 5) / sma50, 6)} / day
+<span class="h">Calculation</span>${sma200_prev != null
+  ? `SMA200[t]     = $${fmtNum(sma200)}
+SMA200[t−5]   = $${fmtNum(sma200_prev)}
+Δ over 5 days = $${fmtNum(sma200 - sma200_prev)}
+per-day       = $${fmtNum((sma200 - sma200_prev) / 5, 4)}
+÷ SMA200[t]   = ${fmtNum(((sma200 - sma200_prev) / 5) / sma200, 6)} / day
 × 252         = ${fmtPct(slope)}  (annualized)`
-  : '(insufficient history — need 55 bars)'}
+  : '(insufficient history — need 205 bars)'}
 
 <span class="h">Dead zone</span>±${(SLOPE_DEAD_ZONE_ANN*100).toFixed(0)}% annualized. Slope is "flat" inside the band, "rising"/"falling" outside.
 
-<span class="h">Used by</span>LONG rule (slope > +${(SLOPE_DEAD_ZONE_ANN*100).toFixed(0)}%) · SHORT rule (slope < −${(SLOPE_DEAD_ZONE_ANN*100).toFixed(0)}%)</div>
+<span class="h">Used by</span>SHORT rule (slope < −${(SLOPE_DEAD_ZONE_ANN*100).toFixed(0)}%)</div>
         </details>
       </div>
     </div>
