@@ -436,13 +436,13 @@
     <div class="ctl">
       <label>Features</label>
       <select id="ctl-features">
-        <option value="ret">Fast trend only (5d return)</option>
-        <option value="ret_vol" selected>Fast + slow trend (5d + 20d return)</option>
+        <option value="ret">1d return only</option>
+        <option value="ret_vol" selected>1d return + 10d trend-MSE (paper feature pair)</option>
       </select>
     </div>
     <div class="ctl">
       <label>EM iterations (max)</label>
-      <input type="number" id="ctl-iters" value="100" min="10" max="500">
+      <input type="number" id="ctl-iters" value="75" min="10" max="500">
     </div>
     <div class="ctl">
       <label>Random restarts</label>
@@ -494,7 +494,7 @@
       <tbody></tbody>
     </table>
     <div class="note">
-      <strong>What's here.</strong> For each hidden state the model learned a full-covariance bivariate Gaussian over (5-day mean log return, 20-day mean log return). <strong>Means</strong> are the typical values inside that regime, <strong>std</strong> rows are the spread. <strong>Fast ↔ slow correlation</strong> is the within-regime correlation between the two return windows — full covariance captures this; a diagonal model would throw it away. <strong>Stickiness</strong> = expected duration in trading days, 1 / (1 − P(stay)).
+      <strong>What's here.</strong> For each hidden state the model learned a full-covariance bivariate Gaussian over (1-day log return, 10-day trend-MSE). <strong>Means</strong> are the typical values inside that regime, <strong>std</strong> rows are the spread. <strong>Return ↔ vol correlation</strong> is the within-regime cross-feature correlation — full covariance captures this; a diagonal model would throw it away. <strong>Stickiness</strong> = expected duration in trading days, 1 / (1 − P(stay)).
     </div>
   </div>
 
@@ -535,7 +535,7 @@
   <div class="chart-wrap tall"><canvas id="price-chart"></canvas></div>
   <div class="chart-hint">scroll · pinch to zoom · drag to pan · hover for per-bar detail</div>
   <div class="note">
-    <strong>Reading the chart.</strong> The line is QQQ adjusted close. Green bands = LONG, red = SHORT, gray = CHOP. Bands come from the Viterbi path with runs shorter than 4 bars merged into their neighbor.
+    <strong>Reading the chart.</strong> The line is QQQ adjusted close. Green bands = LONG, red = SHORT, gray = CHOP. Bands come from the Viterbi path — the single most-likely sequence of hidden states given the observations. No post-hoc smoothing (paper doesn't use any).
   </div>
 </div>
 
@@ -620,7 +620,7 @@
     <table id="data-table">
       <thead>
         <tr>
-          <th>Date</th><th>Close</th><th>1d return</th><th>5d mean ret</th><th>20d mean ret</th><th>10d vol</th>
+          <th>Date</th><th>Close</th><th>1d return</th><th>10d trend-MSE (×10⁴)</th>
           <th>P(LONG)</th><th>P(SHORT)</th><th>P(CHOP)</th><th>Regime</th>
         </tr>
       </thead>
@@ -628,7 +628,7 @@
     </table>
   </div>
   <div class="note">
-    <strong>Transparency.</strong> 1d return = ln(Close / PrevClose). 5d mean ret = average of the prior 5 daily log returns (fast direction signal). 20d mean ret = average of the prior 20 daily log returns (slow trend confirmation). 10d vol = standard deviation of the prior 10 daily log returns — still shown for transparency but no longer fed to the HMM. P(state) = smoothed posterior probability from forward-backward. Regime = Viterbi hard label after short-run smoothing.
+    <strong>Transparency.</strong> 1d return = ln(Close / PrevClose). 10d trend-MSE = mean squared deviation of log-close from its 10-day moving average over the prior 10 bars — the paper's volatility / trend-deviation feature, expressed in log-price units so it doesn't drift with the absolute price level. Shown ×10⁴ for readability. P(state) = smoothed posterior probability from forward-backward. Regime = Viterbi hard label (no post-hoc smoothing).
   </div>
 </div>
 
@@ -640,12 +640,13 @@
     <ol style="margin-left: 20px; margin-bottom: 12px;">
       <li><strong>Initial probabilities π</strong> — chance the chain starts in each state.</li>
       <li><strong>Transition matrix A</strong> — chance of moving from state i to state j between bars.</li>
-      <li><strong>Emission distributions</strong> — each state has a <em>full-covariance</em> bivariate Gaussian over (5-day mean log return, 20-day mean log return). The two return windows let the model commit to LONG when both agree the trend is up, commit to SHORT when both agree it's down, and read disagreement (fast positive but slow still negative, or vice versa) as transitional CHOP. Full covariance lets the model also learn the within-regime correlation between fast and slow.</li>
+      <li><strong>Emission distributions</strong> — each state has a <em>full-covariance</em> bivariate Gaussian over (1-day log return, 10-day trend-MSE). Full covariance is important: bear days are jointly low-return <em>and</em> high-vol, and that cross-feature correlation is exactly what separates a real bear cluster from "low-return-but-calm" chop. A diagonal model throws this signal away.</li>
     </ol>
-    <p style="margin-bottom: 12px;"><strong>The features.</strong> Two return windows: a fast 5-day mean (reacts within a week of a turning point) and a slow 20-day mean (smooths over short pullbacks within trends). The 10-day realized volatility is still computed and shown for transparency but is no longer fed to the HMM — it kept SHORT regimes pinned past actual bottoms because vol stays elevated for weeks into a recovery.</p>
-    <p style="margin-bottom: 12px;"><strong>Stickiness prior.</strong> The M-step adds Dirichlet pseudocounts to the transition matrix (100 on the diagonal, 1 off-diagonal) — a soft prior that says "regimes are persistent unless the data strongly disagrees." Without it, EM can drift to a near-uniform transition matrix that flips on residual noise.</p>
+    <p style="margin-bottom: 12px;"><strong>The features.</strong> The return feature is the 1-day log return — exactly the paper's "daily return" feature. The vol / trend-deviation feature is the 10-day MSE of log-close against its 10-day moving average — exactly the paper's specification, but using log-close instead of raw close so the feature stays scale-invariant over QQQ's 7× price growth across the training window (the paper's SPY only grew ~2× so they didn't have this problem).</p>
+    <p style="margin-bottom: 12px;"><strong>No transition prior.</strong> The M-step uses straight maximum-likelihood estimates for the transition matrix — no Dirichlet pseudocounts. The paper relies on a separate confidence-threshold gate for trading decisions rather than baking stickiness into the HMM itself.</p>
     <p style="margin-bottom: 12px;"><strong>Why 10 years of training data.</strong> EM needs a strong signal to find well-separated state Gaussians. A 10-year window for QQQ contains Q4 2018, March 2020, all of 2022, and other clear stress periods — these anchor the "SHORT" state cluster firmly and let the other two regimes sort themselves around it. On a 2-year window of mostly trending data, the model has to invent a bear state from scraps, and the boundaries blur.</p>
-    <p style="margin-bottom: 12px;"><strong>Post-hoc smoothing.</strong> After Viterbi decoding, runs shorter than 4 bars are merged into the longer neighboring run — short flickers aren't real regime changes. Note this smoothing applies only to the chart display; the backtest uses unsmoothed causal labels so it can react as fast as the data allows.</p>
+    <p style="margin-bottom: 12px;"><strong>Decoder.</strong> Chart shows the Viterbi path — the single most-likely sequence of hidden states given the observations. Same decoder the paper uses. No post-hoc min-run smoothing.</p>
+    <p style="margin-bottom: 12px;"><strong>Training caveat.</strong> The paper retrained the HMM every day on the most recent 2707 trading days (rolling). This is computationally impractical in-browser — we train once on the user-selected training range and apply the trained model to the display window. So expect some parameter look-ahead unless the display window is fully out-of-sample relative to the training range.</p>
     <p style="margin-bottom: 12px;"><strong>Training.</strong> We run <strong>Baum-Welch</strong>, an Expectation-Maximization algorithm:
       (E-step) given current parameters, compute the probability of being in each state on each day via the forward-backward algorithm;
       (M-step) re-estimate π, A, and the Gaussians using those probabilities as soft assignments. Repeat until log-likelihood stops improving meaningfully. We do this from several random initializations and keep the best fit.</p>
@@ -687,55 +688,43 @@ async function fetchQQQ(range) {
 }
 
 // =====================================================================
-// Features
-//   feature 1: mean log return over FAST_RET_WINDOW bars  (fast direction)
-//   feature 2: mean log return over SLOW_RET_WINDOW bars  (trend confirmation)
-//   (10d realized vol still computed for the data table but no longer fed
-//   to the HMM — it dragged SHORT regimes past actual bottoms because vol
-//   stays elevated for weeks after a bear bottom.)
-//
-// The dual-window scheme lets the model distinguish:
-//   - real bull:        fast +, slow +     -> LONG
-//   - real bear:        fast -, slow -     -> SHORT
-//   - bull pullback:    fast -, slow +     -> CHOP (briefly)
-//   - bear recovery:    fast +, slow -     -> CHOP (transitional)
+// Features — Wang/Lin/Mikhelson (2020) feature pair:
+//   feature 1: 1-day log return  (direction)
+//   feature 2: 10-day MSE of log-close vs its 10-day MA  (vol / trend
+//             deviation)
+// We use log-close instead of raw close in the MSE because QQQ grows ~7x
+// over the 25y window and raw-price MSE would be confounded by absolute
+// price level. The paper's SPY only grew ~2x over its 10.7y window so
+// they didn't have this problem.
 // =====================================================================
-const FAST_RET_WINDOW = 5;
-const SLOW_RET_WINDOW = 20;
 const VOL_WINDOW = 10;
 
-function buildFeatures(series, useSlow) {
+function buildFeatures(series, useVol) {
   const rows = [];
   for (let i = 1; i < series.length; i++) {
     const r = Math.log(series[i].close / series[i-1].close);
     rows.push({
       date: series[i].date,
       close: series[i].close,
+      logClose: Math.log(series[i].close),
       ret: r,
-      retMean: null,
-      retMeanSlow: null,
-      volStd: null,
+      volMSE: null,
     });
   }
-  const W = Math.max(FAST_RET_WINDOW, SLOW_RET_WINDOW, VOL_WINDOW);
   for (let i = 0; i < rows.length; i++) {
-    if (i < W) continue;
-    let sR = 0;
-    for (let k = i - FAST_RET_WINDOW; k < i; k++) sR += rows[k].ret;
-    rows[i].retMean = sR / FAST_RET_WINDOW;
-    let sS = 0;
-    for (let k = i - SLOW_RET_WINDOW; k < i; k++) sS += rows[k].ret;
-    rows[i].retMeanSlow = sS / SLOW_RET_WINDOW;
-    let mV = 0;
-    for (let k = i - VOL_WINDOW; k < i; k++) mV += rows[k].ret;
-    mV /= VOL_WINDOW;
-    let v = 0;
-    for (let k = i - VOL_WINDOW; k < i; k++) v += (rows[k].ret - mV) ** 2;
-    rows[i].volStd = Math.sqrt(v / (VOL_WINDOW - 1));
+    if (i < VOL_WINDOW - 1) continue;
+    let mean = 0;
+    for (let k = i - VOL_WINDOW + 1; k <= i; k++) mean += rows[k].logClose;
+    mean /= VOL_WINDOW;
+    let mse = 0;
+    for (let k = i - VOL_WINDOW + 1; k <= i; k++) {
+      const d = rows[k].logClose - mean;
+      mse += d * d;
+    }
+    rows[i].volMSE = mse / VOL_WINDOW;
   }
-  const clean = rows.filter(r =>
-    r.retMean != null && r.retMeanSlow != null && r.volStd != null);
-  const X = clean.map(r => useSlow ? [r.retMean, r.retMeanSlow] : [r.retMean]);
+  const clean = rows.filter(r => r.volMSE != null);
+  const X = clean.map(r => useVol ? [r.ret, r.volMSE] : [r.ret]);
   return { rows: clean, X };
 }
 
@@ -916,28 +905,18 @@ function forwardBackward(X, model) {
   return { gamma, xiSum, logLik };
 }
 
-// Dirichlet pseudocounts on the transition matrix — biases the MAP estimate
-// of A toward sticky regimes. The data can still override when the signal
-// is strong, but EM can't collapse to a noisy near-uniform A.
-const TRANS_PRIOR_DIAG = 5;
-const TRANS_PRIOR_OFF = 1;
-
-// Baum-Welch M-step with full covariance + Dirichlet transition prior.
+// Standard Baum-Welch M-step. No transition prior — Wang/Lin/Mikhelson
+// (2020) use straight ML estimates and a separate trade-confirmation
+// threshold downstream rather than baking stickiness into the model.
 function mStep(X, gamma, xiSum) {
   const T = X.length, K = gamma[0].length, D = X[0].length;
   const pi = gamma[0].slice();
   const A = Array.from({length: K}, () => new Array(K));
   for (let j = 0; j < K; j++) {
     let rowSum = 0;
-    for (let k = 0; k < K; k++) {
-      const prior = (j === k) ? TRANS_PRIOR_DIAG : TRANS_PRIOR_OFF;
-      rowSum += xiSum[j][k] + prior;
-    }
+    for (let k = 0; k < K; k++) rowSum += xiSum[j][k];
     if (rowSum < 1e-12) rowSum = 1e-12;
-    for (let k = 0; k < K; k++) {
-      const prior = (j === k) ? TRANS_PRIOR_DIAG : TRANS_PRIOR_OFF;
-      A[j][k] = (xiSum[j][k] + prior) / rowSum;
-    }
+    for (let k = 0; k < K; k++) A[j][k] = xiSum[j][k] / rowSum;
   }
   const mu = Array.from({length: K}, () => new Array(D).fill(0));
   const Sigma = Array.from({length: K}, () =>
@@ -1072,8 +1051,9 @@ async function trainAsync(X, opts, onProgress) {
     allLogs.push({ restart: r, log });
   }
   const fb = forwardBackward(X, best.model);
-  const rawPath = viterbi(X, best.model);
-  const path = smoothPath(rawPath, 4);
+  // Viterbi path = single most-likely sequence of hidden states; the paper's
+  // chart decoder. No post-hoc smoothing — the paper doesn't use one.
+  const path = viterbi(X, best.model);
   // Causal/filtered posterior for backtest — uses only past data through each bar
   const filteredGamma = forwardFilter(X, best.model);
   return { ...best, gamma: fb.gamma, filteredGamma, path, allLogs };
@@ -1198,6 +1178,8 @@ function buildRegimeBands(rows, states) {
 function renderResults({ rows, featureMu, featureSd, result, useVol, range, restarts }) {
   const T = rows.length;
   const labelOf = relabel(result, featureMu, featureSd);
+  // Chart hard labels: Viterbi path — single most-likely sequence of hidden
+  // states given all observations. Matches the paper. No min-run smoothing.
   const states = result.path.map(k => labelOf[k]);
   const probByLabel = result.gamma.map(row => {
     const o = { LONG: 0, SHORT: 0, CHOP: 0 };
@@ -1262,8 +1244,8 @@ function renderResults({ rows, featureMu, featureSd, result, useVol, range, rest
     stateData[s] = {
       muRet: fmtPct2(muRet),
       sdRet: fmtPct2(sdRet),
-      muVol: muVol == null ? '—' : fmtPct2(muVol),
-      sdVol: sdVol == null ? '—' : fmtPct2(sdVol),
+      muVol: muVol == null ? '—' : (muVol * 1e4).toFixed(2),
+      sdVol: sdVol == null ? '—' : (sdVol * 1e4).toFixed(2),
       corr:  corr  == null ? '—' : corr.toFixed(2),
       stick: (1 / Math.max(1e-9, 1 - pStay)).toFixed(1) + ' d',
     };
@@ -1274,11 +1256,11 @@ function renderResults({ rows, featureMu, featureSd, result, useVol, range, rest
       ${stateOrder.map(s => `<th><span class="pill ${s.toLowerCase()}">${s}</span></th>`).join('')}
     </tr>`;
   const metricRows = [
-    ['Mean 5d return',          'muRet'],
-    ['Std of 5d return',        'sdRet'],
-    ['Mean 20d return',         'muVol'],
-    ['Std of 20d return',       'sdVol'],
-    ['Fast ↔ slow correlation', 'corr'],
+    ['Mean 1d return',          'muRet'],
+    ['Std of 1d return',        'sdRet'],
+    ['Mean 10d trend-MSE (×10⁴)', 'muVol'],
+    ['Std of 10d trend-MSE (×10⁴)', 'sdVol'],
+    ['Return ↔ vol correlation','corr'],
     ['Stickiness',              'stick'],
   ];
   document.querySelector('#params-table tbody').innerHTML = metricRows.map(([name, key]) => `
@@ -1320,7 +1302,7 @@ function renderResults({ rows, featureMu, featureSd, result, useVol, range, rest
   });
   document.getElementById('training-log').textContent = lines.join('\n');
   document.getElementById('training-summary').textContent =
-    `Range: ${range} · ${T} bars · features: ${useVol ? '5d + 20d mean return' : '5d mean return only'} · full covariance · stickiness prior (diag=${TRANS_PRIOR_DIAG}) · min-run 4 · ${restarts} restart(s) · best log-likelihood ${result.logLik.toFixed(3)}`;
+    `Range: ${range} · ${T} bars · features: ${useVol ? '1d return + 10d trend-MSE' : '1d return only'} · full covariance · no transition prior · no min-run · Viterbi decode · ${restarts} restart(s) · best log-likelihood ${result.logLik.toFixed(3)}`;
 
   TRAINED = { rows, probByLabel, states, filteredByLabel };
   runAndRenderBacktest();
@@ -1668,9 +1650,7 @@ function renderPriceChart(rows, states) {
               return [
                 `Close: $${r.close.toFixed(2)}`,
                 `1d return: ${(r.ret*100).toFixed(2)}%`,
-                `5d mean ret: ${(r.retMean*100).toFixed(2)}%`,
-                `20d mean ret: ${(r.retMeanSlow*100).toFixed(2)}%`,
-                `10d vol: ${(r.volStd*100).toFixed(2)}%`,
+                `10d trend-MSE: ${(r.volMSE*1e4).toFixed(2)} ×10⁻⁴`,
                 `Regime: ${states[i]}`
               ];
             }
@@ -1760,9 +1740,7 @@ function renderDataTable(rows, probByLabel, states) {
       <td>${r.date.toISOString().slice(0,10)}</td>
       <td>${r.close.toFixed(2)}</td>
       <td>${(r.ret*100).toFixed(3)}%</td>
-      <td>${(r.retMean*100).toFixed(3)}%</td>
-      <td>${(r.retMeanSlow*100).toFixed(3)}%</td>
-      <td>${(r.volStd*100).toFixed(3)}%</td>
+      <td>${(r.volMSE*1e4).toFixed(2)}</td>
       <td>${(p.LONG*100).toFixed(1)}%</td>
       <td>${(p.SHORT*100).toFixed(1)}%</td>
       <td>${(p.CHOP*100).toFixed(1)}%</td>
@@ -1785,16 +1763,14 @@ document.getElementById('data-filter').addEventListener('input', e => {
 document.getElementById('csv-btn').addEventListener('click', () => {
   if (!TRAINED) return;
   const { rows, probByLabel, states } = TRAINED;
-  const lines = ['date,close,log_return,mean_return_5d,mean_return_20d,realized_vol_10d,p_long,p_short,p_chop,regime'];
+  const lines = ['date,close,log_return,trend_mse_10d,p_long,p_short,p_chop,regime'];
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i], p = probByLabel[i];
     lines.push([
       r.date.toISOString().slice(0,10),
       r.close.toFixed(4),
       r.ret.toFixed(6),
-      r.retMean.toFixed(6),
-      r.retMeanSlow.toFixed(6),
-      r.volStd.toFixed(6),
+      r.volMSE.toFixed(8),
       p.LONG.toFixed(4), p.SHORT.toFixed(4), p.CHOP.toFixed(4),
       states[i]
     ].join(','));
@@ -1836,12 +1812,11 @@ function applyStandardize(X, mu, sd) {
 }
 
 // Run all inference passes on a sequence with a pre-trained model.
-// Returns gamma (smoothed posterior), path (Viterbi, optionally smoothed),
-// filteredGamma (causal posterior).
-function inferOnSequence(Z, model, minRun) {
+// Returns gamma (smoothed posterior), path (raw Viterbi), filteredGamma
+// (causal posterior).
+function inferOnSequence(Z, model) {
   const fb = forwardBackward(Z, model);
-  const rawPath = viterbi(Z, model);
-  const path = smoothPath(rawPath, minRun);
+  const path = viterbi(Z, model);
   const filteredGamma = forwardFilter(Z, model);
   return { gamma: fb.gamma, path, filteredGamma };
 }
@@ -1856,7 +1831,7 @@ async function run() {
     const restarts = Math.max(1, Math.min(500, parseInt(document.getElementById('ctl-restarts').value || '5')));
     const displayWin = document.getElementById('ctl-display').value;
 
-    const featureLabel = useVol ? '5d + 20d mean return' : '5d mean return only';
+    const featureLabel = useVol ? '1d return + 10d trend-MSE' : '1d return only';
     document.getElementById('loader-sub').textContent =
       `3-state regime model · QQQ · ${featureLabel}`;
 
@@ -1903,7 +1878,7 @@ async function run() {
     const dispX = dispIdx.map(i => fullFeats.X[i]);
     const dispZ = applyStandardize(dispX, featureMu, featureSd);
 
-    const disp = inferOnSequence(dispZ, result.model, 7);
+    const disp = inferOnSequence(dispZ, result.model);
     // Stuff display-window inference results into the same result shape
     // renderResults already expects (so we don't change its plumbing).
     const dispResult = { ...result, gamma: disp.gamma, path: disp.path, filteredGamma: disp.filteredGamma };
