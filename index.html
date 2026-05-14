@@ -291,6 +291,36 @@
     border: 1px solid var(--red); margin-bottom: 16px;
   }
 
+  /* Side toggles */
+  .bt-sides {
+    display: flex; gap: 16px; margin-top: 12px;
+    padding-top: 12px; border-top: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  .bt-check {
+    display: inline-flex; align-items: center; gap: 8px;
+    cursor: pointer; user-select: none;
+    font-size: 11px; color: var(--text);
+  }
+  .bt-check input[type="checkbox"] {
+    appearance: none; -webkit-appearance: none;
+    width: 14px; height: 14px; margin: 0;
+    border: 1px solid var(--border); background: var(--panel-2);
+    position: relative; cursor: pointer;
+  }
+  .bt-check input[type="checkbox"]:checked {
+    background: var(--accent); border-color: var(--accent);
+  }
+  .bt-check input[type="checkbox"]:checked::after {
+    content: ''; position: absolute; left: 3px; top: 0;
+    width: 4px; height: 8px;
+    border: solid var(--bg); border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+  }
+  .bt-check .lbl {
+    text-transform: uppercase; letter-spacing: 0.12em; font-size: 10px;
+  }
+
   /* Backtest layout */
   .bt-grid {
     display: grid;
@@ -498,6 +528,17 @@
         <label>Allocation per trade (%)</label>
         <input type="number" id="bt-alloc" value="100" min="1" max="100">
       </div>
+    </div>
+
+    <div class="bt-sides">
+      <label class="bt-check">
+        <input type="checkbox" id="bt-long" checked>
+        <span class="lbl">Trade TQQQ on LONG</span>
+      </label>
+      <label class="bt-check">
+        <input type="checkbox" id="bt-short" checked>
+        <span class="lbl">Trade SQQQ on SHORT</span>
+      </label>
     </div>
 
     <div id="bt-stats" class="bt-stats"></div>
@@ -1176,6 +1217,8 @@ function renderResults({ rows, featureMu, featureSd, result, useVol, range, rest
 function runBacktest(rows, states, opts) {
   const T = rows.length;
   const initial = opts.initial, allocFrac = opts.allocPct / 100;
+  const tradeLong = opts.tradeLong !== false;
+  const tradeShort = opts.tradeShort !== false;
 
   // Synthesize ±3× leveraged daily close series from QQQ daily simple returns.
   // Compounding the daily multiplier reproduces vol drag the same way the
@@ -1215,9 +1258,11 @@ function runBacktest(rows, states, opts) {
       position = null;
     }
 
-    // Enter on LONG/SHORT bars when flat
-    if (!position && (st === 'LONG' || st === 'SHORT')) {
-      const symbol = st === 'LONG' ? 'TQQQ' : 'SQQQ';
+    // Enter on LONG/SHORT bars when flat, respecting side toggles
+    const wantLong  = st === 'LONG'  && tradeLong;
+    const wantShort = st === 'SHORT' && tradeShort;
+    if (!position && (wantLong || wantShort)) {
+      const symbol = wantLong ? 'TQQQ' : 'SQQQ';
       const px = symbol === 'TQQQ' ? tPx : sPx;
       const totalEquity = cash; // currently flat, so total = cash
       const alloc = totalEquity * allocFrac;
@@ -1386,13 +1431,17 @@ function runAndRenderBacktest() {
   if (!TRAINED) return;
   const initial = Math.max(100, parseFloat(document.getElementById('bt-initial').value) || 10000);
   const allocPct = Math.min(100, Math.max(1, parseFloat(document.getElementById('bt-alloc').value) || 100));
-  const result = runBacktest(TRAINED.rows, TRAINED.states, { initial, allocPct });
+  const tradeLong = document.getElementById('bt-long').checked;
+  const tradeShort = document.getElementById('bt-short').checked;
+  const result = runBacktest(TRAINED.rows, TRAINED.states, { initial, allocPct, tradeLong, tradeShort });
   renderBacktestStats(result.stats, initial);
   renderBacktestChart(result.equity, result.buyHold);
 }
 
 document.getElementById('bt-initial').addEventListener('input', runAndRenderBacktest);
 document.getElementById('bt-alloc').addEventListener('input', runAndRenderBacktest);
+document.getElementById('bt-long').addEventListener('change', runAndRenderBacktest);
+document.getElementById('bt-short').addEventListener('change', runAndRenderBacktest);
 
 function renderPriceChart(rows, states) {
   const ctx = document.getElementById('price-chart');
