@@ -519,7 +519,7 @@
 <div class="bt-grid">
   <div class="panel">
     <div class="panel-title">Backtest engine <span class="hint">±3× QQQ daily · same-bar exits</span></div>
-    <div class="controls-grid" style="grid-template-columns: 1fr 1fr;">
+    <div class="controls-grid" style="grid-template-columns: 1fr 1fr 1fr;">
       <div class="ctl">
         <label>Initial portfolio ($)</label>
         <input type="number" id="bt-initial" value="10000" min="100" step="100">
@@ -527,6 +527,10 @@
       <div class="ctl">
         <label>Allocation per trade (%)</label>
         <input type="number" id="bt-alloc" value="100" min="1" max="100">
+      </div>
+      <div class="ctl">
+        <label>Min P(state) to trade (%)</label>
+        <input type="number" id="bt-threshold" value="55" min="34" max="90" step="1">
       </div>
     </div>
 
@@ -544,7 +548,9 @@
     <div id="bt-stats" class="bt-stats"></div>
 
     <div class="note">
-      <strong>Rules.</strong> Buy <strong>TQQQ</strong> on every LONG bar, <strong>SQQQ</strong> on every SHORT bar, hold <strong>cash</strong> on CHOP. Exit on any regime change and immediately enter the new instrument (or sit in cash). Allocation % is applied to total portfolio value at each entry; the rest stays in cash. TQQQ/SQQQ daily returns modeled as ±3× the underlying QQQ simple daily return — captures volatility drag but ignores expense ratios and tracking error.
+      <strong>Rules.</strong> Backtest uses <em>causal/filtered</em> regime probabilities — each bar's label is computed using only data through that bar (no forward-backward smoothing, no future data). Hold <strong>TQQQ</strong> when filtered P(LONG) ≥ threshold, <strong>SQQQ</strong> when filtered P(SHORT) ≥ threshold, <strong>cash</strong> otherwise. Allocation % is applied to total portfolio value at each entry. TQQQ/SQQQ modeled as ±3× the underlying QQQ daily simple return — captures volatility drag, ignores expense ratios and tracking error.
+      <br><br>
+      <strong>Caveat.</strong> The HMM parameters themselves were trained on the full 10y window, so there is still residual parameter look-ahead. Walk-forward retraining would fix this fully but is much slower; available as a follow-up if needed.
     </div>
   </div>
 
@@ -917,6 +923,36 @@ function mStep(X, gamma, xiSum) {
   return model;
 }
 
+// Forward-only filter: returns the *causal* state posterior P(z_t | x_1..x_t).
+// Unlike forward-backward, this never uses future observations. The backtest
+// uses these labels so trades are made on information that would have been
+// available in real time (modulo the parameters themselves being trained on
+// the full window — see UI caveat).
+function forwardFilter(X, model) {
+  const T = X.length, K = model.pi.length;
+  const logB = Array.from({length: T}, () => new Array(K));
+  for (let t = 0; t < T; t++)
+    for (let k = 0; k < K; k++)
+      logB[t][k] = logGaussianFull(X[t], model.mu[k], model.invSigma[k], model.logDetSigma[k]);
+  const logA = model.A.map(row => row.map(v => Math.log(Math.max(v, 1e-300))));
+  const logPi = model.pi.map(v => Math.log(Math.max(v, 1e-300)));
+  const logAlpha = Array.from({length: T}, () => new Array(K));
+  for (let k = 0; k < K; k++) logAlpha[0][k] = logPi[k] + logB[0][k];
+  for (let t = 1; t < T; t++) {
+    for (let k = 0; k < K; k++) {
+      const tmp = new Array(K);
+      for (let j = 0; j < K; j++) tmp[j] = logAlpha[t-1][j] + logA[j][k];
+      logAlpha[t][k] = logsumexp(tmp) + logB[t][k];
+    }
+  }
+  const gamma = Array.from({length: T}, () => new Array(K));
+  for (let t = 0; t < T; t++) {
+    const norm = logsumexp(logAlpha[t]);
+    for (let k = 0; k < K; k++) gamma[t][k] = Math.exp(logAlpha[t][k] - norm);
+  }
+  return gamma;
+}
+
 function viterbi(X, model) {
   const T = X.length, K = model.pi.length;
   const logA = model.A.map(row => row.map(v => Math.log(Math.max(v, 1e-300))));
@@ -989,7 +1025,9 @@ async function trainAsync(X, opts, onProgress) {
   const fb = forwardBackward(X, best.model);
   const rawPath = viterbi(X, best.model);
   const path = smoothPath(rawPath, 8);
-  return { ...best, gamma: fb.gamma, path, allLogs };
+  // Causal/filtered posterior for backtest — uses only past data through each bar
+  const filteredGamma = forwardFilter(X, best.model);
+  return { ...best, gamma: fb.gamma, filteredGamma, path, allLogs };
 }
 
 // Collapse Viterbi runs shorter than minRun into the longer neighboring run.
@@ -1087,6 +1125,12 @@ function renderResults({ rows, featureMu, featureSd, result, useVol, range, rest
   const labelOf = relabel(result, featureMu, featureSd);
   const states = result.path.map(k => labelOf[k]);
   const probByLabel = result.gamma.map(row => {
+    const o = { LONG: 0, SHORT: 0, CHOP: 0 };
+    for (let k = 0; k < row.length; k++) o[labelOf[k]] = row[k];
+    return o;
+  });
+  // Causal filtered posterior used by the backtest — only past data per bar.
+  const filteredByLabel = result.filteredGamma.map(row => {
     const o = { LONG: 0, SHORT: 0, CHOP: 0 };
     for (let k = 0; k < row.length; k++) o[labelOf[k]] = row[k];
     return o;
@@ -1203,7 +1247,7 @@ function renderResults({ rows, featureMu, featureSd, result, useVol, range, rest
   document.getElementById('training-summary').textContent =
     `Range: ${range} · ${T} bars · features: ${useVol ? '15d mean return + 10d realized vol' : '15d mean return only'} · full covariance · stickiness prior (diag=${TRANS_PRIOR_DIAG}) · min-run ${8} · ${restarts} restart(s) · best log-likelihood ${result.logLik.toFixed(3)}`;
 
-  TRAINED = { rows, probByLabel, states };
+  TRAINED = { rows, probByLabel, states, filteredByLabel };
   runAndRenderBacktest();
 }
 
@@ -1427,19 +1471,36 @@ function renderBacktestChart(equity, buyHold) {
   });
 }
 
+// Derive causal trading labels from filtered probabilities + threshold.
+// argmax-with-threshold: take whichever state's filtered probability is
+// highest AND above threshold; otherwise sit in CHOP (cash).
+function causalLabels(filteredByLabel, threshold) {
+  return filteredByLabel.map(p => {
+    let best = 'CHOP', bestP = -1;
+    for (const s of ['LONG', 'SHORT', 'CHOP']) {
+      if (p[s] > bestP) { bestP = p[s]; best = s; }
+    }
+    if (best === 'CHOP') return 'CHOP';
+    return bestP >= threshold ? best : 'CHOP';
+  });
+}
+
 function runAndRenderBacktest() {
   if (!TRAINED) return;
   const initial = Math.max(100, parseFloat(document.getElementById('bt-initial').value) || 10000);
   const allocPct = Math.min(100, Math.max(1, parseFloat(document.getElementById('bt-alloc').value) || 100));
+  const thresholdPct = Math.min(90, Math.max(34, parseFloat(document.getElementById('bt-threshold').value) || 55));
   const tradeLong = document.getElementById('bt-long').checked;
   const tradeShort = document.getElementById('bt-short').checked;
-  const result = runBacktest(TRAINED.rows, TRAINED.states, { initial, allocPct, tradeLong, tradeShort });
+  const tradingStates = causalLabels(TRAINED.filteredByLabel, thresholdPct / 100);
+  const result = runBacktest(TRAINED.rows, tradingStates, { initial, allocPct, tradeLong, tradeShort });
   renderBacktestStats(result.stats, initial);
   renderBacktestChart(result.equity, result.buyHold);
 }
 
 document.getElementById('bt-initial').addEventListener('input', runAndRenderBacktest);
 document.getElementById('bt-alloc').addEventListener('input', runAndRenderBacktest);
+document.getElementById('bt-threshold').addEventListener('input', runAndRenderBacktest);
 document.getElementById('bt-long').addEventListener('change', runAndRenderBacktest);
 document.getElementById('bt-short').addEventListener('change', runAndRenderBacktest);
 
