@@ -1837,7 +1837,7 @@ async function run() {
   try {
     const useVol = document.getElementById('ctl-features').value === 'ret_vol';
     const maxIters = Math.max(10, Math.min(500, parseInt(document.getElementById('ctl-iters').value || '80')));
-    const restarts = Math.max(1, Math.min(20, parseInt(document.getElementById('ctl-restarts').value || '5')));
+    const restarts = Math.max(1, Math.min(500, parseInt(document.getElementById('ctl-restarts').value || '5')));
     const displayWin = document.getElementById('ctl-display').value;
 
     const featureLabel = useVol ? '25d mean ret + 10d vol' : '25d mean ret only';
