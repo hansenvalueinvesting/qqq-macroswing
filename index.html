@@ -436,8 +436,8 @@
     <div class="ctl">
       <label>Features</label>
       <select id="ctl-features">
-        <option value="ret">25d mean return only</option>
-        <option value="ret_vol" selected>25d mean return + 10d realized vol</option>
+        <option value="ret">15d mean return only</option>
+        <option value="ret_vol" selected>15d mean return + 10d realized vol</option>
       </select>
     </div>
     <div class="ctl">
@@ -494,7 +494,7 @@
       <tbody></tbody>
     </table>
     <div class="note">
-      <strong>What's here.</strong> For each hidden state the model learned a full-covariance bivariate Gaussian over (25-day mean log return, 10-day realized vol). <strong>Means</strong> are the typical values inside that regime, <strong>std</strong> rows are the spread. <strong>Return ↔ vol correlation</strong> is the within-regime cross-feature correlation — full covariance captures this; a diagonal model would throw it away. <strong>Stickiness</strong> = expected duration in trading days, 1 / (1 − P(stay)).
+      <strong>What's here.</strong> For each hidden state the model learned a full-covariance bivariate Gaussian over (15-day mean log return, 10-day realized vol). <strong>Means</strong> are the typical values inside that regime, <strong>std</strong> rows are the spread. <strong>Return ↔ vol correlation</strong> is the within-regime cross-feature correlation — full covariance captures this; a diagonal model would throw it away. <strong>Stickiness</strong> = expected duration in trading days, 1 / (1 − P(stay)).
     </div>
   </div>
 
@@ -535,7 +535,7 @@
   <div class="chart-wrap tall"><canvas id="price-chart"></canvas></div>
   <div class="chart-hint">scroll · pinch to zoom · drag to pan · hover for per-bar detail</div>
   <div class="note">
-    <strong>Reading the chart.</strong> The line is QQQ adjusted close. Green bands = LONG, red = SHORT, gray = CHOP. Bands come from the Viterbi path with runs shorter than 7 bars merged into their neighbor.
+    <strong>Reading the chart.</strong> The line is QQQ adjusted close. Green bands = LONG, red = SHORT, gray = CHOP. Bands come from the Viterbi path with runs shorter than 5 bars merged into their neighbor.
   </div>
 </div>
 
@@ -620,7 +620,7 @@
     <table id="data-table">
       <thead>
         <tr>
-          <th>Date</th><th>Close</th><th>1d return</th><th>25d mean ret</th><th>10d vol</th>
+          <th>Date</th><th>Close</th><th>1d return</th><th>15d mean ret</th><th>10d vol</th>
           <th>P(LONG)</th><th>P(SHORT)</th><th>P(CHOP)</th><th>Regime</th>
         </tr>
       </thead>
@@ -628,7 +628,7 @@
     </table>
   </div>
   <div class="note">
-    <strong>Transparency.</strong> 1d return = ln(Close / PrevClose). 25d mean ret = average of the prior 25 daily log returns (the model's direction signal). 10d vol = standard deviation of the prior 10 daily log returns (the model's stress signal). P(state) = smoothed posterior probability from forward-backward. Regime = Viterbi hard label after short-run smoothing.
+    <strong>Transparency.</strong> 1d return = ln(Close / PrevClose). 15d mean ret = average of the prior 15 daily log returns (the model's direction signal). 10d vol = standard deviation of the prior 10 daily log returns (the model's stress signal). P(state) = smoothed posterior probability from forward-backward. Regime = Viterbi hard label after short-run smoothing.
   </div>
 </div>
 
@@ -640,12 +640,12 @@
     <ol style="margin-left: 20px; margin-bottom: 12px;">
       <li><strong>Initial probabilities π</strong> — chance the chain starts in each state.</li>
       <li><strong>Transition matrix A</strong> — chance of moving from state i to state j between bars.</li>
-      <li><strong>Emission distributions</strong> — each state has a <em>full-covariance</em> bivariate Gaussian over (25-day mean log return, 10-day realized volatility). Full covariance is important: bear days are jointly low-return <em>and</em> high-vol, and that cross-feature correlation is exactly what separates a real bear cluster from "low-return-but-calm" chop. A diagonal model throws this signal away.</li>
+      <li><strong>Emission distributions</strong> — each state has a <em>full-covariance</em> bivariate Gaussian over (15-day mean log return, 10-day realized volatility). Full covariance is important: bear days are jointly low-return <em>and</em> high-vol, and that cross-feature correlation is exactly what separates a real bear cluster from "low-return-but-calm" chop. A diagonal model throws this signal away.</li>
     </ol>
-    <p style="margin-bottom: 12px;"><strong>The features.</strong> The return feature is a 25-day mean of daily log returns — long enough that brief pullbacks inside a trend don't push the average to zero. The vol feature is a standard 10-day realized volatility (sample std of the prior 10 log returns) — direction-agnostic stress proxy.</p>
+    <p style="margin-bottom: 12px;"><strong>The features.</strong> The return feature is a 15-day mean of daily log returns — long enough that brief pullbacks inside a trend don't push the average to zero. The vol feature is a standard 10-day realized volatility (sample std of the prior 10 log returns) — direction-agnostic stress proxy.</p>
     <p style="margin-bottom: 12px;"><strong>Stickiness prior.</strong> The M-step adds Dirichlet pseudocounts to the transition matrix (100 on the diagonal, 1 off-diagonal) — a soft prior that says "regimes are persistent unless the data strongly disagrees." Without it, EM can drift to a near-uniform transition matrix that flips on residual noise.</p>
     <p style="margin-bottom: 12px;"><strong>Why 10 years of training data.</strong> EM needs a strong signal to find well-separated state Gaussians. A 10-year window for QQQ contains Q4 2018, March 2020, all of 2022, and other clear stress periods — these anchor the "SHORT" state cluster firmly and let the other two regimes sort themselves around it. On a 2-year window of mostly trending data, the model has to invent a bear state from scraps, and the boundaries blur.</p>
-    <p style="margin-bottom: 12px;"><strong>Post-hoc smoothing.</strong> After Viterbi decoding, runs shorter than 7 bars are merged into the longer neighboring run — short flickers aren't real regime changes. Note this smoothing applies only to the chart display; the backtest uses unsmoothed causal labels so it can react as fast as the data allows.</p>
+    <p style="margin-bottom: 12px;"><strong>Post-hoc smoothing.</strong> After Viterbi decoding, runs shorter than 5 bars are merged into the longer neighboring run — short flickers aren't real regime changes. Note this smoothing applies only to the chart display; the backtest uses unsmoothed causal labels so it can react as fast as the data allows.</p>
     <p style="margin-bottom: 12px;"><strong>Training.</strong> We run <strong>Baum-Welch</strong>, an Expectation-Maximization algorithm:
       (E-step) given current parameters, compute the probability of being in each state on each day via the forward-backward algorithm;
       (M-step) re-estimate π, A, and the Gaussians using those probabilities as soft assignments. Repeat until log-likelihood stops improving meaningfully. We do this from several random initializations and keep the best fit.</p>
@@ -693,7 +693,7 @@ async function fetchQQQ(range) {
 //
 // Both windows look back only — today's observation uses past data only.
 // =====================================================================
-const RET_WINDOW = 25;
+const RET_WINDOW = 15;
 const VOL_WINDOW = 10;
 
 function buildFeatures(series, useVol) {
@@ -906,7 +906,7 @@ function forwardBackward(X, model) {
 // Dirichlet pseudocounts on the transition matrix — biases the MAP estimate
 // of A toward sticky regimes. The data can still override when the signal
 // is strong, but EM can't collapse to a noisy near-uniform A.
-const TRANS_PRIOR_DIAG = 200;
+const TRANS_PRIOR_DIAG = 50;
 const TRANS_PRIOR_OFF = 1;
 
 // Baum-Welch M-step with full covariance + Dirichlet transition prior.
@@ -1060,7 +1060,7 @@ async function trainAsync(X, opts, onProgress) {
   }
   const fb = forwardBackward(X, best.model);
   const rawPath = viterbi(X, best.model);
-  const path = smoothPath(rawPath, 7);
+  const path = smoothPath(rawPath, 5);
   // Causal/filtered posterior for backtest — uses only past data through each bar
   const filteredGamma = forwardFilter(X, best.model);
   return { ...best, gamma: fb.gamma, filteredGamma, path, allLogs };
@@ -1307,7 +1307,7 @@ function renderResults({ rows, featureMu, featureSd, result, useVol, range, rest
   });
   document.getElementById('training-log').textContent = lines.join('\n');
   document.getElementById('training-summary').textContent =
-    `Range: ${range} · ${T} bars · features: ${useVol ? '25d mean return + 10d realized vol' : '25d mean return only'} · full covariance · stickiness prior (diag=${TRANS_PRIOR_DIAG}) · min-run 7 · ${restarts} restart(s) · best log-likelihood ${result.logLik.toFixed(3)}`;
+    `Range: ${range} · ${T} bars · features: ${useVol ? '15d mean return + 10d realized vol' : '15d mean return only'} · full covariance · stickiness prior (diag=${TRANS_PRIOR_DIAG}) · min-run 5 · ${restarts} restart(s) · best log-likelihood ${result.logLik.toFixed(3)}`;
 
   TRAINED = { rows, probByLabel, states, filteredByLabel };
   runAndRenderBacktest();
@@ -1840,7 +1840,7 @@ async function run() {
     const restarts = Math.max(1, Math.min(500, parseInt(document.getElementById('ctl-restarts').value || '5')));
     const displayWin = document.getElementById('ctl-display').value;
 
-    const featureLabel = useVol ? '25d mean ret + 10d vol' : '25d mean ret only';
+    const featureLabel = useVol ? '15d mean ret + 10d vol' : '15d mean ret only';
     document.getElementById('loader-sub').textContent =
       `3-state regime model · QQQ · ${featureLabel}`;
 
