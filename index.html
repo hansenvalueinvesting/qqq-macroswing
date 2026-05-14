@@ -177,9 +177,12 @@
     display: inline-block; width: 10px; height: 10px; margin-right: 6px;
     vertical-align: -1px;
   }
-  .chart-toolbar .legend-inline .sw.long { background: rgba(95,184,120,0.45); }
-  .chart-toolbar .legend-inline .sw.short { background: rgba(214,90,90,0.45); }
-  .chart-toolbar .legend-inline .sw.chop { background: rgba(138,134,128,0.45); }
+  .chart-toolbar .legend-inline .sw.long { background: rgba(95,184,120,0.55); }
+  .chart-toolbar .legend-inline .sw.short { background: rgba(214,90,90,0.55); }
+  .chart-toolbar .legend-inline .sw.chop {
+    background: transparent;
+    border: 1px dashed var(--dim);
+  }
   .chart-hint {
     font-size: 9px; color: var(--dim); margin-top: 6px;
     text-transform: uppercase; letter-spacing: 0.12em; text-align: right;
@@ -503,7 +506,7 @@
   <div class="chart-wrap tall"><canvas id="price-chart"></canvas></div>
   <div class="chart-hint">scroll · pinch to zoom · drag to pan · hover for per-bar detail</div>
   <div class="note">
-    <strong>Reading the chart.</strong> The line is QQQ adjusted close. Background bands show the model's <em>hard</em> regime label per day — the Viterbi path with runs shorter than 8 bars merged into their neighbor.
+    <strong>Reading the chart.</strong> The line is QQQ adjusted close. Green bands = LONG, red = SHORT, no shading = CHOP (model uncommitted). Bands come from the Viterbi path with runs shorter than 4 bars merged into their neighbor.
   </div>
 </div>
 
@@ -609,7 +612,7 @@
     <p style="margin-bottom: 12px;"><strong>The features.</strong> The return feature is a 15-day mean of daily log returns — a single-day return on QQQ is too noisy for the per-state Gaussians to distinguish (sign flips constantly), so the model needs a smoothed directional signal to anchor LONG vs. SHORT. The vol feature is a standard 10-day realized volatility (sample std of the prior 10 log returns) — direction-agnostic stress proxy.</p>
     <p style="margin-bottom: 12px;"><strong>Stickiness prior.</strong> The M-step adds Dirichlet pseudocounts to the transition matrix (100 on the diagonal, 1 off-diagonal) — a soft prior that says "regimes are persistent unless the data strongly disagrees." Without it, EM can drift to a near-uniform transition matrix that flips on residual noise.</p>
     <p style="margin-bottom: 12px;"><strong>Why 10 years of training data.</strong> EM needs a strong signal to find well-separated state Gaussians. A 10-year window for QQQ contains Q4 2018, March 2020, all of 2022, and other clear stress periods — these anchor the "SHORT" state cluster firmly and let the other two regimes sort themselves around it. On a 2-year window of mostly trending data, the model has to invent a bear state from scraps, and the boundaries blur.</p>
-    <p style="margin-bottom: 12px;"><strong>Post-hoc smoothing.</strong> After Viterbi decoding, runs shorter than 8 bars are merged into the longer neighboring run — short flickers aren't real regime changes. Heavier smoothing makes the chart cleaner at the cost of slightly slower reaction to genuine flips.</p>
+    <p style="margin-bottom: 12px;"><strong>Post-hoc smoothing.</strong> After Viterbi decoding, runs shorter than 4 bars are merged into the longer neighboring run — short flickers aren't real regime changes. Note this smoothing applies only to the chart display; the backtest uses unsmoothed causal labels so it can react as fast as the data allows.</p>
     <p style="margin-bottom: 12px;"><strong>Training.</strong> We run <strong>Baum-Welch</strong>, an Expectation-Maximization algorithm:
       (E-step) given current parameters, compute the probability of being in each state on each day via the forward-backward algorithm;
       (M-step) re-estimate π, A, and the Gaussians using those probabilities as soft assignments. Repeat until log-likelihood stops improving meaningfully. We do this from several random initializations and keep the best fit.</p>
@@ -1024,7 +1027,7 @@ async function trainAsync(X, opts, onProgress) {
   }
   const fb = forwardBackward(X, best.model);
   const rawPath = viterbi(X, best.model);
-  const path = smoothPath(rawPath, 8);
+  const path = smoothPath(rawPath, 4);
   // Causal/filtered posterior for backtest — uses only past data through each bar
   const filteredGamma = forwardFilter(X, best.model);
   return { ...best, gamma: fb.gamma, filteredGamma, path, allLogs };
@@ -1082,7 +1085,9 @@ function relabel(result, featureMu, featureSd) {
 // Render
 // =====================================================================
 const COLORS = { LONG: '#5fb878', SHORT: '#d65a5a', CHOP: '#8a8680' };
-const BAND_ALPHA = { LONG: 'rgba(95, 184, 120, 0.10)', SHORT: 'rgba(214, 90, 90, 0.10)', CHOP: 'rgba(138, 134, 128, 0.08)' };
+// LONG and SHORT bands are saturated enough to read at a glance; CHOP is fully
+// transparent — "no band" means the model is uncommitted on that bar.
+const BAND_ALPHA = { LONG: 'rgba(95, 184, 120, 0.22)', SHORT: 'rgba(214, 90, 90, 0.22)', CHOP: 'rgba(0, 0, 0, 0)' };
 
 let priceChart = null, probChart = null, btChart = null;
 let TRAINED = null;
@@ -1245,7 +1250,7 @@ function renderResults({ rows, featureMu, featureSd, result, useVol, range, rest
   });
   document.getElementById('training-log').textContent = lines.join('\n');
   document.getElementById('training-summary').textContent =
-    `Range: ${range} · ${T} bars · features: ${useVol ? '15d mean return + 10d realized vol' : '15d mean return only'} · full covariance · stickiness prior (diag=${TRANS_PRIOR_DIAG}) · min-run ${8} · ${restarts} restart(s) · best log-likelihood ${result.logLik.toFixed(3)}`;
+    `Range: ${range} · ${T} bars · features: ${useVol ? '15d mean return + 10d realized vol' : '15d mean return only'} · full covariance · stickiness prior (diag=${TRANS_PRIOR_DIAG}) · min-run 4 · ${restarts} restart(s) · best log-likelihood ${result.logLik.toFixed(3)}`;
 
   TRAINED = { rows, probByLabel, states, filteredByLabel };
   runAndRenderBacktest();
