@@ -179,10 +179,7 @@
   }
   .chart-toolbar .legend-inline .sw.long { background: rgba(95,184,120,0.55); }
   .chart-toolbar .legend-inline .sw.short { background: rgba(214,90,90,0.55); }
-  .chart-toolbar .legend-inline .sw.chop {
-    background: transparent;
-    border: 1px dashed var(--dim);
-  }
+  .chart-toolbar .legend-inline .sw.chop { background: rgba(138,134,128,0.55); }
   .chart-hint {
     font-size: 9px; color: var(--dim); margin-top: 6px;
     text-transform: uppercase; letter-spacing: 0.12em; text-align: right;
@@ -539,7 +536,7 @@
   <div class="chart-wrap tall"><canvas id="price-chart"></canvas></div>
   <div class="chart-hint">scroll · pinch to zoom · drag to pan · hover for per-bar detail</div>
   <div class="note">
-    <strong>Reading the chart.</strong> The line is QQQ adjusted close. Green bands = LONG, red = SHORT, no shading = CHOP (model uncommitted). Bands come from the Viterbi path with runs shorter than 7 bars merged into their neighbor.
+    <strong>Reading the chart.</strong> The line is QQQ adjusted close. Green bands = LONG, red = SHORT, gray = CHOP. Bands come from the Viterbi path with runs shorter than 7 bars merged into their neighbor.
   </div>
 </div>
 
@@ -1118,9 +1115,9 @@ function relabel(result, featureMu, featureSd) {
 // Render
 // =====================================================================
 const COLORS = { LONG: '#5fb878', SHORT: '#d65a5a', CHOP: '#8a8680' };
-// LONG and SHORT bands are saturated enough to read at a glance; CHOP is fully
-// transparent — "no band" means the model is uncommitted on that bar.
-const BAND_ALPHA = { LONG: 'rgba(95, 184, 120, 0.22)', SHORT: 'rgba(214, 90, 90, 0.22)', CHOP: 'rgba(0, 0, 0, 0)' };
+// All three states get visible shading so the chart shows LONG / CHOP / SHORT
+// as distinct colored bands.
+const BAND_ALPHA = { LONG: 'rgba(95, 184, 120, 0.22)', SHORT: 'rgba(214, 90, 90, 0.22)', CHOP: 'rgba(138, 134, 128, 0.18)' };
 
 let priceChart = null, probChart = null, btChart = null, trainSelChart = null;
 let TRAINED = null;
