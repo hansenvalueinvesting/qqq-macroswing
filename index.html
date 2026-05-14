@@ -294,6 +294,19 @@
     border: 1px solid var(--red); margin-bottom: 16px;
   }
 
+  /* Training-range selector */
+  .train-sel-wrap {
+    position: relative; height: 120px; margin-bottom: 4px;
+    cursor: crosshair;
+    border-bottom: 1px solid var(--border);
+  }
+  .train-sel-summary {
+    font-size: 10px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.15em;
+    margin-top: 12px;
+  }
+  .train-sel-summary strong { color: var(--text); }
+
   /* Side toggles */
   .bt-sides {
     display: flex; gap: 16px; margin-top: 12px;
@@ -392,18 +405,38 @@
 
 <div id="error-slot"></div>
 
+<!-- Training range selector + display window -->
+<div class="panel full" style="margin-bottom: 20px;">
+  <div class="panel-title">Training range &amp; display window <span class="hint">drag the chart to set training range</span></div>
+  <div class="train-sel-wrap">
+    <canvas id="train-sel-chart"></canvas>
+  </div>
+  <div class="controls-grid" style="grid-template-columns: 1fr 1fr 1fr; margin-top: 14px;">
+    <div class="ctl">
+      <label>Train from</label>
+      <input type="date" id="ctl-train-start">
+    </div>
+    <div class="ctl">
+      <label>Train to</label>
+      <input type="date" id="ctl-train-end">
+    </div>
+    <div class="ctl">
+      <label>Display window</label>
+      <select id="ctl-display">
+        <option value="1y">Last 1 year</option>
+        <option value="3y">Last 3 years</option>
+        <option value="5y" selected>Last 5 years</option>
+        <option value="10y">Last 10 years</option>
+        <option value="all">All trained bars</option>
+      </select>
+    </div>
+  </div>
+  <div class="train-sel-summary" id="train-sel-summary">—</div>
+</div>
+
 <div class="panel full" style="margin-bottom: 20px;">
   <div class="panel-title">Model controls <span class="hint">change &amp; retrain</span></div>
   <div class="controls-grid">
-    <div class="ctl">
-      <label>History</label>
-      <select id="ctl-range">
-        <option value="1y">1 year</option>
-        <option value="2y">2 years</option>
-        <option value="5y">5 years</option>
-        <option value="10y" selected>10 years</option>
-      </select>
-    </div>
     <div class="ctl">
       <label>Features</label>
       <select id="ctl-features">
@@ -1089,8 +1122,32 @@ const COLORS = { LONG: '#5fb878', SHORT: '#d65a5a', CHOP: '#8a8680' };
 // transparent — "no band" means the model is uncommitted on that bar.
 const BAND_ALPHA = { LONG: 'rgba(95, 184, 120, 0.22)', SHORT: 'rgba(214, 90, 90, 0.22)', CHOP: 'rgba(0, 0, 0, 0)' };
 
-let priceChart = null, probChart = null, btChart = null;
+let priceChart = null, probChart = null, btChart = null, trainSelChart = null;
 let TRAINED = null;
+let FULL_SERIES = null;          // {date, close}[]  — fetched once
+let TRAIN_RANGE = null;          // { start: Date, end: Date }
+let DRAGGING = null;             // { startX, startDate, mode: 'create' }
+
+const DAY_MS = 86400000;
+
+function isoDate(d) { return d.toISOString().slice(0, 10); }
+function parseIso(s) { return new Date(s + 'T00:00:00Z'); }
+function yearsAgo(d, n) { const x = new Date(d); x.setFullYear(x.getFullYear() - n); return x; }
+
+function clampDate(d, lo, hi) {
+  if (d < lo) return new Date(lo);
+  if (d > hi) return new Date(hi);
+  return new Date(d);
+}
+
+// Compute display range start from a window selector ('1y'/'3y'/'5y'/'10y'/'all')
+function displayStartDate(windowSel, lastDate, firstDate) {
+  if (windowSel === 'all') return firstDate;
+  const m = /^(\d+)y$/.exec(windowSel);
+  const yrs = m ? parseInt(m[1]) : 5;
+  const cand = yearsAgo(lastDate, yrs);
+  return cand < firstDate ? firstDate : cand;
+}
 
 function setStage(stage, pct, detail) {
   document.getElementById('loader-stage').textContent = stage;
@@ -1719,35 +1776,112 @@ document.getElementById('csv-btn').addEventListener('click', () => {
 // =====================================================================
 // Main
 // =====================================================================
+async function ensureFullSeries() {
+  if (FULL_SERIES) return FULL_SERIES;
+  setStage('Fetching full QQQ history…', 0.02, 'max');
+  FULL_SERIES = await fetchQQQ('max');
+  return FULL_SERIES;
+}
+
+function initDefaultTrainRange(series) {
+  // Default: train on everything except the last 5 years (proper out-of-sample
+  // evaluation), display = last 5 years.
+  const first = series[0].date;
+  const last = series[series.length - 1].date;
+  const end = yearsAgo(last, 5);
+  const safeEnd = end < first ? last : end;
+  TRAIN_RANGE = { start: new Date(first), end: safeEnd };
+  document.getElementById('ctl-train-start').value = isoDate(TRAIN_RANGE.start);
+  document.getElementById('ctl-train-end').value = isoDate(TRAIN_RANGE.end);
+}
+
+// Apply already-known training-set standardization stats to a new X matrix
+function applyStandardize(X, mu, sd) {
+  return X.map(row => row.map((v, d) => (v - mu[d]) / sd[d]));
+}
+
+// Run all inference passes on a sequence with a pre-trained model.
+// Returns gamma (smoothed posterior), path (Viterbi, optionally smoothed),
+// filteredGamma (causal posterior).
+function inferOnSequence(Z, model, minRun) {
+  const fb = forwardBackward(Z, model);
+  const rawPath = viterbi(Z, model);
+  const path = smoothPath(rawPath, minRun);
+  const filteredGamma = forwardFilter(Z, model);
+  return { gamma: fb.gamma, path, filteredGamma };
+}
+
 async function run() {
   document.getElementById('loader').classList.remove('hidden');
   document.getElementById('error-slot').innerHTML = '';
   document.getElementById('retrain-btn').disabled = true;
   try {
-    const range = document.getElementById('ctl-range').value;
     const useVol = document.getElementById('ctl-features').value === 'ret_vol';
     const maxIters = Math.max(10, Math.min(500, parseInt(document.getElementById('ctl-iters').value || '80')));
     const restarts = Math.max(1, Math.min(20, parseInt(document.getElementById('ctl-restarts').value || '5')));
+    const displayWin = document.getElementById('ctl-display').value;
 
-    const featureLabel = useVol ? '15d mean ret + 10d vol' : '15d mean ret only';
+    const featureLabel = useVol ? '25d mean ret + 10d vol' : '25d mean ret only';
     document.getElementById('loader-sub').textContent =
-      `3-state regime model · QQQ · ${range} daily · ${featureLabel}`;
-    setStage('Fetching QQQ data…', 0.02, range);
-    const series = await fetchQQQ(range);
+      `3-state regime model · QQQ · ${featureLabel}`;
+
+    const series = await ensureFullSeries();
+    if (!TRAIN_RANGE) initDefaultTrainRange(series);
+    else {
+      const s = parseIso(document.getElementById('ctl-train-start').value);
+      const e = parseIso(document.getElementById('ctl-train-end').value);
+      if (!isNaN(s) && !isNaN(e) && s < e) TRAIN_RANGE = { start: s, end: e };
+    }
+
     setStage('Building features…', 0.06, `${series.length} bars`);
     await new Promise(r => setTimeout(r, 0));
-    const feats = buildFeatures(series, useVol);
-    const { Z, mu: featureMu, sd: featureSd } = standardize(feats.X);
+    // Build features on the FULL series once so warmup is consumed at the start
+    const fullFeats = buildFeatures(series, useVol);
 
-    setStage('Initializing HMM…', 0.08, `T=${Z.length}  D=${Z[0].length}  K=3`);
+    // Slice features by training range
+    const trIdx = [];
+    for (let i = 0; i < fullFeats.rows.length; i++) {
+      const d = fullFeats.rows[i].date;
+      if (d >= TRAIN_RANGE.start && d <= TRAIN_RANGE.end) trIdx.push(i);
+    }
+    if (trIdx.length < 60) throw new Error('Training range too short (need ≥60 bars after warmup).');
+    const trainX = trIdx.map(i => fullFeats.X[i]);
+    const { Z: trainZ, mu: featureMu, sd: featureSd } = standardize(trainX);
+
+    setStage('Initializing HMM…', 0.08, `train T=${trainZ.length}  D=${trainZ[0].length}  K=3`);
     await new Promise(r => setTimeout(r, 0));
 
-    const result = await trainAsync(Z, { restarts, maxIters, tol: 1e-4, K: 3 },
-      ({pct, detail}) => setStage('EM training (Baum-Welch)…', 0.1 + 0.85 * pct, detail));
+    const result = await trainAsync(trainZ, { restarts, maxIters, tol: 1e-4, K: 3 },
+      ({pct, detail}) => setStage('EM training (Baum-Welch)…', 0.1 + 0.7 * pct, detail));
 
-    setStage('Decoding regimes…', 0.97, 'Viterbi');
+    // Slice features by display window
+    setStage('Decoding regimes for display window…', 0.85, displayWin);
     await new Promise(r => setTimeout(r, 0));
-    renderResults({ rows: feats.rows, featureMu, featureSd, result, useVol, range, restarts });
+    const lastDate = fullFeats.rows[fullFeats.rows.length - 1].date;
+    const firstDate = fullFeats.rows[0].date;
+    const dispStart = displayStartDate(displayWin, lastDate, firstDate);
+    const dispIdx = [];
+    for (let i = 0; i < fullFeats.rows.length; i++) {
+      if (fullFeats.rows[i].date >= dispStart) dispIdx.push(i);
+    }
+    const dispRows = dispIdx.map(i => fullFeats.rows[i]);
+    const dispX = dispIdx.map(i => fullFeats.X[i]);
+    const dispZ = applyStandardize(dispX, featureMu, featureSd);
+
+    const disp = inferOnSequence(dispZ, result.model, 7);
+    // Stuff display-window inference results into the same result shape
+    // renderResults already expects (so we don't change its plumbing).
+    const dispResult = { ...result, gamma: disp.gamma, path: disp.path, filteredGamma: disp.filteredGamma };
+
+    const rangeLabel = `train ${isoDate(TRAIN_RANGE.start)}→${isoDate(TRAIN_RANGE.end)} · display ${displayWin}`;
+
+    renderResults({
+      rows: dispRows, featureMu, featureSd, result: dispResult,
+      useVol, range: rangeLabel, restarts,
+    });
+    renderTrainSelChart();
+    attachTrainSelDrag();
+    updateTrainSummary(trainZ.length, dispRows.length, displayWin);
     setStage('Done.', 1, '');
     await new Promise(r => setTimeout(r, 250));
     document.getElementById('loader').classList.add('hidden');
@@ -1760,7 +1894,127 @@ async function run() {
   }
 }
 
+function updateTrainSummary(trainBars, dispBars, displayWin) {
+  const s = TRAIN_RANGE;
+  if (!s) { document.getElementById('train-sel-summary').textContent = '—'; return; }
+  document.getElementById('train-sel-summary').innerHTML =
+    `<strong>${isoDate(s.start)}</strong> → <strong>${isoDate(s.end)}</strong> · `
+    + `${trainBars} training bars · display ${displayWin} = ${dispBars} bars`;
+}
+
+// Plugin: shade the training selection on the selector chart
+const trainSelectionPlugin = {
+  id: 'trainSelection',
+  beforeDatasetsDraw(chart) {
+    if (!TRAIN_RANGE) return;
+    const { ctx, chartArea, scales } = chart;
+    if (!chartArea) return;
+    const x0 = scales.x.getPixelForValue(TRAIN_RANGE.start);
+    const x1 = scales.x.getPixelForValue(TRAIN_RANGE.end);
+    const lo = Math.max(chartArea.left, Math.min(x0, x1));
+    const hi = Math.min(chartArea.right, Math.max(x0, x1));
+    ctx.save();
+    ctx.fillStyle = 'rgba(212, 160, 74, 0.13)';
+    ctx.fillRect(lo, chartArea.top, hi - lo, chartArea.bottom - chartArea.top);
+    ctx.strokeStyle = 'rgba(212, 160, 74, 0.55)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(lo, chartArea.top); ctx.lineTo(lo, chartArea.bottom);
+    ctx.moveTo(hi, chartArea.top); ctx.lineTo(hi, chartArea.bottom);
+    ctx.stroke();
+    ctx.restore();
+  }
+};
+
+function renderTrainSelChart() {
+  if (!FULL_SERIES) return;
+  const ctx = document.getElementById('train-sel-chart');
+  const data = FULL_SERIES.map(r => ({ x: r.date, y: r.close }));
+  if (trainSelChart) {
+    trainSelChart.data.datasets[0].data = data;
+    trainSelChart.update('none');
+    return;
+  }
+  trainSelChart = new Chart(ctx, {
+    type: 'line',
+    data: { datasets: [{
+      label: 'QQQ', data,
+      borderColor: '#6b6862', borderWidth: 1,
+      pointRadius: 0, tension: 0,
+    }]},
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      animation: false,
+      scales: {
+        x: { type: 'time', time: { unit: 'year' },
+          grid: { color: '#1a1a1a' },
+          ticks: { color: '#6b6862', font: { size: 9 }, maxRotation: 0, autoSkipPadding: 30 } },
+        y: { type: 'logarithmic', display: false },
+      },
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+    },
+    plugins: [trainSelectionPlugin],
+  });
+}
+
+function attachTrainSelDrag() {
+  const canvas = document.getElementById('train-sel-chart');
+  if (!canvas || canvas.dataset.dragWired) return;
+  canvas.dataset.dragWired = '1';
+
+  function pxToDate(clientX) {
+    if (!trainSelChart) return null;
+    const rect = canvas.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const t = trainSelChart.scales.x.getValueForPixel(x);
+    return new Date(t);
+  }
+
+  canvas.addEventListener('mousedown', e => {
+    if (!trainSelChart) return;
+    const first = FULL_SERIES[0].date, last = FULL_SERIES[FULL_SERIES.length - 1].date;
+    const d = clampDate(pxToDate(e.clientX), first, last);
+    DRAGGING = { start: d, end: d };
+    TRAIN_RANGE = { start: d, end: new Date(d.getTime() + DAY_MS) };
+    trainSelChart.update('none');
+  });
+
+  window.addEventListener('mousemove', e => {
+    if (!DRAGGING) return;
+    const first = FULL_SERIES[0].date, last = FULL_SERIES[FULL_SERIES.length - 1].date;
+    const d = clampDate(pxToDate(e.clientX), first, last);
+    DRAGGING.end = d;
+    const a = DRAGGING.start, b = DRAGGING.end;
+    TRAIN_RANGE = { start: a < b ? a : b, end: a < b ? b : a };
+    document.getElementById('ctl-train-start').value = isoDate(TRAIN_RANGE.start);
+    document.getElementById('ctl-train-end').value = isoDate(TRAIN_RANGE.end);
+    trainSelChart.update('none');
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (!DRAGGING) return;
+    DRAGGING = null;
+    // Run after a release
+    if ((TRAIN_RANGE.end - TRAIN_RANGE.start) > 90 * DAY_MS) run();
+  });
+}
+
 document.getElementById('retrain-btn').addEventListener('click', run);
+
+let trainInputTimer = null;
+function onTrainInputChange() {
+  clearTimeout(trainInputTimer);
+  trainInputTimer = setTimeout(() => {
+    const s = parseIso(document.getElementById('ctl-train-start').value);
+    const e = parseIso(document.getElementById('ctl-train-end').value);
+    if (isNaN(s) || isNaN(e) || s >= e) return;
+    TRAIN_RANGE = { start: s, end: e };
+    run();
+  }, 400);
+}
+document.getElementById('ctl-train-start').addEventListener('change', onTrainInputChange);
+document.getElementById('ctl-train-end').addEventListener('change', onTrainInputChange);
+document.getElementById('ctl-display').addEventListener('change', run);
 
 document.querySelectorAll('#range-btns .range-btn[data-range]').forEach(btn => {
   btn.addEventListener('click', () => {
