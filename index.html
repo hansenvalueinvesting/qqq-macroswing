@@ -1793,11 +1793,12 @@ async function ensureFullSeries() {
 }
 
 function initDefaultTrainRange(series) {
-  // Default: 2000-01-01 to 2025-12-31, clipped to available data.
+  // Default: Wang/Lin/Mikhelson (2020) training period — Jan 2007 to Sep 2017,
+  // ~10.7 years, clipped to available data.
   const first = series[0].date;
   const last = series[series.length - 1].date;
-  const defStart = parseIso('2000-01-01');
-  const defEnd = parseIso('2025-12-31');
+  const defStart = parseIso('2007-01-01');
+  const defEnd = parseIso('2017-09-30');
   TRAIN_RANGE = {
     start: clampDate(defStart, first, last),
     end:   clampDate(defEnd,   first, last),
