@@ -333,6 +333,20 @@
   .bt-check .lbl {
     text-transform: uppercase; letter-spacing: 0.12em; font-size: 10px;
   }
+  .bt-pick {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 11px; color: var(--text);
+  }
+  .bt-pick .lbl {
+    text-transform: uppercase; letter-spacing: 0.12em; font-size: 10px;
+    color: var(--muted);
+  }
+  .bt-pick select {
+    background: var(--panel-2); border: 1px solid var(--border);
+    color: var(--text); padding: 4px 8px; font-family: inherit;
+    font-size: 11px; cursor: pointer;
+  }
+  .bt-pick select:focus { outline: none; border-color: var(--accent); }
 
   /* Backtest layout */
   .bt-grid {
@@ -568,12 +582,16 @@
     </div>
 
     <div class="bt-sides">
-      <label class="bt-check">
-        <input type="checkbox" id="bt-long" checked>
-        <span class="lbl">Trade TQQQ on LONG</span>
+      <label class="bt-pick">
+        <span class="lbl">Long side</span>
+        <select id="bt-long-inst">
+          <option value="off">Off (cash)</option>
+          <option value="qqq" selected>QQQ (1×)</option>
+          <option value="tqqq">TQQQ (3×)</option>
+        </select>
       </label>
       <label class="bt-check">
-        <input type="checkbox" id="bt-short" checked>
+        <input type="checkbox" id="bt-short">
         <span class="lbl">Trade SQQQ on SHORT</span>
       </label>
     </div>
@@ -581,9 +599,9 @@
     <div id="bt-stats" class="bt-stats"></div>
 
     <div class="note">
-      <strong>Rules.</strong> Backtest uses <em>causal/filtered</em> regime probabilities — each bar's label is computed using only data through that bar (no forward-backward smoothing, no future data). Hold <strong>TQQQ</strong> when filtered P(LONG) ≥ threshold, <strong>SQQQ</strong> when filtered P(SHORT) ≥ threshold, <strong>cash</strong> otherwise. Allocation % is applied to total portfolio value at each entry. TQQQ/SQQQ modeled as ±3× the underlying QQQ daily simple return — captures volatility drag, ignores expense ratios and tracking error.
+      <strong>Rules.</strong> Backtest uses <em>causal/filtered</em> regime probabilities — each bar's label is computed using only data through that bar (no forward-backward smoothing, no future data). Hold the configured <strong>long instrument</strong> when filtered P(LONG) ≥ threshold, <strong>SQQQ</strong> when filtered P(SHORT) ≥ threshold and SHORT is enabled, <strong>cash</strong> otherwise. Allocation % is applied to total portfolio value at each entry. Leveraged ETFs modeled as ±3× the underlying QQQ daily simple return — captures volatility drag, ignores expense ratios and tracking error.
       <br><br>
-      <strong>Caveat.</strong> The HMM parameters themselves were trained on the full 10y window, so there is still residual parameter look-ahead. Walk-forward retraining would fix this fully but is much slower; available as a follow-up if needed.
+      <strong>Caveat.</strong> The HMM parameters themselves were trained on the selected training range, so there is still residual parameter look-ahead unless the display window is fully out-of-sample.
     </div>
   </div>
 
@@ -1320,19 +1338,29 @@ function renderResults({ rows, featureMu, featureSd, result, useVol, range, rest
 function runBacktest(rows, states, opts) {
   const T = rows.length;
   const initial = opts.initial, allocFrac = opts.allocPct / 100;
-  const tradeLong = opts.tradeLong !== false;
+  // longInst: 'off' | 'qqq' | 'tqqq'  — instrument used on LONG signals
+  const longInst = opts.longInst || 'tqqq';
   const tradeShort = opts.tradeShort !== false;
 
-  // Synthesize ±3× leveraged daily close series from QQQ daily simple returns.
-  // Compounding the daily multiplier reproduces vol drag the same way the
-  // real ETFs do — it just doesn't include the small ER/tracking error.
-  const tqqq = new Array(T), sqqq = new Array(T);
-  tqqq[0] = 100; sqqq[0] = 100;
+  // Synthetic normalized price series for each tradable instrument, all
+  // starting at 100. QQQ compounds daily return at 1×; TQQQ at 3×; SQQQ at -3×.
+  // Compounding the daily multiplier reproduces volatility drag the same way
+  // the real ETFs do — it just doesn't include the small ER/tracking error.
+  const qqqPx = new Array(T), tqqq = new Array(T), sqqq = new Array(T);
+  qqqPx[0] = 100; tqqq[0] = 100; sqqq[0] = 100;
   for (let i = 1; i < T; i++) {
     const ds = Math.exp(rows[i].ret) - 1;
-    tqqq[i] = tqqq[i-1] * (1 + 3 * ds);
-    sqqq[i] = sqqq[i-1] * (1 - 3 * ds);
+    qqqPx[i] = qqqPx[i-1] * (1 + ds);
+    tqqq[i]  = tqqq[i-1]  * (1 + 3 * ds);
+    sqqq[i]  = sqqq[i-1]  * (1 - 3 * ds);
   }
+  function pxFor(symbol, i) {
+    if (symbol === 'QQQ')  return qqqPx[i];
+    if (symbol === 'TQQQ') return tqqq[i];
+    return sqqq[i];
+  }
+  const longSymbol = longInst === 'off' ? null
+                   : longInst === 'qqq' ? 'QQQ' : 'TQQQ';
 
   let cash = initial;
   let position = null; // { symbol, shares, entryIdx, entryState, entryValue }
@@ -1343,11 +1371,10 @@ function runBacktest(rows, states, opts) {
 
   for (let i = 0; i < T; i++) {
     const st = states[i];
-    const tPx = tqqq[i], sPx = sqqq[i];
 
     // Exit if held position no longer matches state
     if (position && st !== position.entryState) {
-      const exitPx = position.symbol === 'TQQQ' ? tPx : sPx;
+      const exitPx = pxFor(position.symbol, i);
       const exitValue = position.shares * exitPx;
       cash += exitValue;
       trades.push({
@@ -1362,11 +1389,11 @@ function runBacktest(rows, states, opts) {
     }
 
     // Enter on LONG/SHORT bars when flat, respecting side toggles
-    const wantLong  = st === 'LONG'  && tradeLong;
+    const wantLong  = st === 'LONG'  && longSymbol != null;
     const wantShort = st === 'SHORT' && tradeShort;
     if (!position && (wantLong || wantShort)) {
-      const symbol = wantLong ? 'TQQQ' : 'SQQQ';
-      const px = symbol === 'TQQQ' ? tPx : sPx;
+      const symbol = wantLong ? longSymbol : 'SQQQ';
+      const px = pxFor(symbol, i);
       const totalEquity = cash; // currently flat, so total = cash
       const alloc = totalEquity * allocFrac;
       const shares = alloc / px;
@@ -1376,10 +1403,7 @@ function runBacktest(rows, states, opts) {
 
     // Mark-to-market
     let mtm = cash;
-    if (position) {
-      const px = position.symbol === 'TQQQ' ? tPx : sPx;
-      mtm += position.shares * px;
-    }
+    if (position) mtm += position.shares * pxFor(position.symbol, i);
     equity[i] = { x: rows[i].date, y: mtm };
     buyHold[i] = { x: rows[i].date, y: initial * (rows[i].close / bhStart) };
   }
@@ -1387,7 +1411,7 @@ function runBacktest(rows, states, opts) {
   // Close any open position at the final bar so stats reflect realized PnL
   // alongside the mark-to-market on the equity line.
   if (position) {
-    const exitPx = position.symbol === 'TQQQ' ? tqqq[T-1] : sqqq[T-1];
+    const exitPx = pxFor(position.symbol, T - 1);
     const exitValue = position.shares * exitPx;
     trades.push({
       symbol: position.symbol,
@@ -1549,10 +1573,10 @@ function runAndRenderBacktest() {
   const initial = Math.max(100, parseFloat(document.getElementById('bt-initial').value) || 10000);
   const allocPct = Math.min(100, Math.max(1, parseFloat(document.getElementById('bt-alloc').value) || 100));
   const thresholdPct = Math.min(90, Math.max(34, parseFloat(document.getElementById('bt-threshold').value) || 55));
-  const tradeLong = document.getElementById('bt-long').checked;
+  const longInst = document.getElementById('bt-long-inst').value;
   const tradeShort = document.getElementById('bt-short').checked;
   const tradingStates = causalLabels(TRAINED.filteredByLabel, thresholdPct / 100);
-  const result = runBacktest(TRAINED.rows, tradingStates, { initial, allocPct, tradeLong, tradeShort });
+  const result = runBacktest(TRAINED.rows, tradingStates, { initial, allocPct, longInst, tradeShort });
   renderBacktestStats(result.stats, initial);
   renderBacktestChart(result.equity, result.buyHold);
 }
@@ -1560,7 +1584,7 @@ function runAndRenderBacktest() {
 document.getElementById('bt-initial').addEventListener('input', runAndRenderBacktest);
 document.getElementById('bt-alloc').addEventListener('input', runAndRenderBacktest);
 document.getElementById('bt-threshold').addEventListener('input', runAndRenderBacktest);
-document.getElementById('bt-long').addEventListener('change', runAndRenderBacktest);
+document.getElementById('bt-long-inst').addEventListener('change', runAndRenderBacktest);
 document.getElementById('bt-short').addEventListener('change', runAndRenderBacktest);
 
 function renderPriceChart(rows, states) {
@@ -1781,13 +1805,15 @@ async function ensureFullSeries() {
 }
 
 function initDefaultTrainRange(series) {
-  // Default: train on everything except the last 5 years (proper out-of-sample
-  // evaluation), display = last 5 years.
+  // Default: 2000-01-01 to 2025-12-31, clipped to available data.
   const first = series[0].date;
   const last = series[series.length - 1].date;
-  const end = yearsAgo(last, 5);
-  const safeEnd = end < first ? last : end;
-  TRAIN_RANGE = { start: new Date(first), end: safeEnd };
+  const defStart = parseIso('2000-01-01');
+  const defEnd = parseIso('2025-12-31');
+  TRAIN_RANGE = {
+    start: clampDate(defStart, first, last),
+    end:   clampDate(defEnd,   first, last),
+  };
   document.getElementById('ctl-train-start').value = isoDate(TRAIN_RANGE.start);
   document.getElementById('ctl-train-end').value = isoDate(TRAIN_RANGE.end);
 }
