@@ -333,21 +333,6 @@
   .bt-check .lbl {
     text-transform: uppercase; letter-spacing: 0.12em; font-size: 10px;
   }
-  .bt-pick {
-    display: inline-flex; align-items: center; gap: 8px;
-    font-size: 11px; color: var(--text);
-  }
-  .bt-pick .lbl {
-    text-transform: uppercase; letter-spacing: 0.12em; font-size: 10px;
-    color: var(--muted);
-  }
-  .bt-pick select {
-    background: var(--panel-2); border: 1px solid var(--border);
-    color: var(--text); padding: 4px 8px; font-family: inherit;
-    font-size: 11px; cursor: pointer;
-  }
-  .bt-pick select:focus { outline: none; border-color: var(--accent); }
-
   /* Backtest layout */
   .bt-grid {
     display: grid;
@@ -582,17 +567,17 @@
     </div>
 
     <div class="bt-sides">
-      <label class="bt-pick">
-        <span class="lbl">Long side</span>
-        <select id="bt-long-inst">
-          <option value="off">Off (cash)</option>
-          <option value="qqq" selected>QQQ (1×)</option>
-          <option value="tqqq">TQQQ (3×)</option>
-        </select>
+      <label class="bt-check">
+        <input type="checkbox" id="bt-qqq" data-inst="qqq" checked>
+        <span class="lbl">QQQ on LONG</span>
       </label>
       <label class="bt-check">
-        <input type="checkbox" id="bt-short">
-        <span class="lbl">Trade SQQQ on SHORT</span>
+        <input type="checkbox" id="bt-tqqq" data-inst="tqqq">
+        <span class="lbl">TQQQ on LONG</span>
+      </label>
+      <label class="bt-check">
+        <input type="checkbox" id="bt-sqqq">
+        <span class="lbl">SQQQ on SHORT</span>
       </label>
     </div>
 
@@ -1573,8 +1558,10 @@ function runAndRenderBacktest() {
   const initial = Math.max(100, parseFloat(document.getElementById('bt-initial').value) || 10000);
   const allocPct = Math.min(100, Math.max(1, parseFloat(document.getElementById('bt-alloc').value) || 100));
   const thresholdPct = Math.min(90, Math.max(34, parseFloat(document.getElementById('bt-threshold').value) || 55));
-  const longInst = document.getElementById('bt-long-inst').value;
-  const tradeShort = document.getElementById('bt-short').checked;
+  const qqqOn  = document.getElementById('bt-qqq').checked;
+  const tqqqOn = document.getElementById('bt-tqqq').checked;
+  const longInst = tqqqOn ? 'tqqq' : (qqqOn ? 'qqq' : 'off');
+  const tradeShort = document.getElementById('bt-sqqq').checked;
   const tradingStates = causalLabels(TRAINED.filteredByLabel, thresholdPct / 100);
   const result = runBacktest(TRAINED.rows, tradingStates, { initial, allocPct, longInst, tradeShort });
   renderBacktestStats(result.stats, initial);
@@ -1584,8 +1571,17 @@ function runAndRenderBacktest() {
 document.getElementById('bt-initial').addEventListener('input', runAndRenderBacktest);
 document.getElementById('bt-alloc').addEventListener('input', runAndRenderBacktest);
 document.getElementById('bt-threshold').addEventListener('input', runAndRenderBacktest);
-document.getElementById('bt-long-inst').addEventListener('change', runAndRenderBacktest);
-document.getElementById('bt-short').addEventListener('change', runAndRenderBacktest);
+// QQQ and TQQQ are mutually exclusive on the long side — checking one
+// unchecks the other. SQQQ is independent.
+function bindLongPair(self, other) {
+  document.getElementById(self).addEventListener('change', e => {
+    if (e.target.checked) document.getElementById(other).checked = false;
+    runAndRenderBacktest();
+  });
+}
+bindLongPair('bt-qqq', 'bt-tqqq');
+bindLongPair('bt-tqqq', 'bt-qqq');
+document.getElementById('bt-sqqq').addEventListener('change', runAndRenderBacktest);
 
 function renderPriceChart(rows, states) {
   const ctx = document.getElementById('price-chart');
