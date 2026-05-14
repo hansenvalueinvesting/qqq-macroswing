@@ -436,8 +436,8 @@
     <div class="ctl">
       <label>Features</label>
       <select id="ctl-features">
-        <option value="ret">5d mean return only</option>
-        <option value="ret_vol" selected>5d mean return + 10d realized vol</option>
+        <option value="ret">Fast trend only (5d return)</option>
+        <option value="ret_vol" selected>Fast + slow trend (5d + 20d return)</option>
       </select>
     </div>
     <div class="ctl">
@@ -494,7 +494,7 @@
       <tbody></tbody>
     </table>
     <div class="note">
-      <strong>What's here.</strong> For each hidden state the model learned a full-covariance bivariate Gaussian over (5-day mean log return, 10-day realized vol). <strong>Means</strong> are the typical values inside that regime, <strong>std</strong> rows are the spread. <strong>Return ↔ vol correlation</strong> is the within-regime cross-feature correlation — full covariance captures this; a diagonal model would throw it away. <strong>Stickiness</strong> = expected duration in trading days, 1 / (1 − P(stay)).
+      <strong>What's here.</strong> For each hidden state the model learned a full-covariance bivariate Gaussian over (5-day mean log return, 20-day mean log return). <strong>Means</strong> are the typical values inside that regime, <strong>std</strong> rows are the spread. <strong>Fast ↔ slow correlation</strong> is the within-regime correlation between the two return windows — full covariance captures this; a diagonal model would throw it away. <strong>Stickiness</strong> = expected duration in trading days, 1 / (1 − P(stay)).
     </div>
   </div>
 
@@ -620,7 +620,7 @@
     <table id="data-table">
       <thead>
         <tr>
-          <th>Date</th><th>Close</th><th>1d return</th><th>5d mean ret</th><th>10d vol</th>
+          <th>Date</th><th>Close</th><th>1d return</th><th>5d mean ret</th><th>20d mean ret</th><th>10d vol</th>
           <th>P(LONG)</th><th>P(SHORT)</th><th>P(CHOP)</th><th>Regime</th>
         </tr>
       </thead>
@@ -628,7 +628,7 @@
     </table>
   </div>
   <div class="note">
-    <strong>Transparency.</strong> 1d return = ln(Close / PrevClose). 5d mean ret = average of the prior 5 daily log returns (the model's direction signal). 10d vol = standard deviation of the prior 10 daily log returns (the model's stress signal). P(state) = smoothed posterior probability from forward-backward. Regime = Viterbi hard label after short-run smoothing.
+    <strong>Transparency.</strong> 1d return = ln(Close / PrevClose). 5d mean ret = average of the prior 5 daily log returns (fast direction signal). 20d mean ret = average of the prior 20 daily log returns (slow trend confirmation). 10d vol = standard deviation of the prior 10 daily log returns — still shown for transparency but no longer fed to the HMM. P(state) = smoothed posterior probability from forward-backward. Regime = Viterbi hard label after short-run smoothing.
   </div>
 </div>
 
@@ -640,9 +640,9 @@
     <ol style="margin-left: 20px; margin-bottom: 12px;">
       <li><strong>Initial probabilities π</strong> — chance the chain starts in each state.</li>
       <li><strong>Transition matrix A</strong> — chance of moving from state i to state j between bars.</li>
-      <li><strong>Emission distributions</strong> — each state has a <em>full-covariance</em> bivariate Gaussian over (5-day mean log return, 10-day realized volatility). Full covariance is important: bear days are jointly low-return <em>and</em> high-vol, and that cross-feature correlation is exactly what separates a real bear cluster from "low-return-but-calm" chop. A diagonal model throws this signal away.</li>
+      <li><strong>Emission distributions</strong> — each state has a <em>full-covariance</em> bivariate Gaussian over (5-day mean log return, 20-day mean log return). The two return windows let the model commit to LONG when both agree the trend is up, commit to SHORT when both agree it's down, and read disagreement (fast positive but slow still negative, or vice versa) as transitional CHOP. Full covariance lets the model also learn the within-regime correlation between fast and slow.</li>
     </ol>
-    <p style="margin-bottom: 12px;"><strong>The features.</strong> The return feature is a 5-day mean of daily log returns — long enough that brief pullbacks inside a trend don't push the average to zero. The vol feature is a standard 10-day realized volatility (sample std of the prior 10 log returns) — direction-agnostic stress proxy.</p>
+    <p style="margin-bottom: 12px;"><strong>The features.</strong> Two return windows: a fast 5-day mean (reacts within a week of a turning point) and a slow 20-day mean (smooths over short pullbacks within trends). The 10-day realized volatility is still computed and shown for transparency but is no longer fed to the HMM — it kept SHORT regimes pinned past actual bottoms because vol stays elevated for weeks into a recovery.</p>
     <p style="margin-bottom: 12px;"><strong>Stickiness prior.</strong> The M-step adds Dirichlet pseudocounts to the transition matrix (100 on the diagonal, 1 off-diagonal) — a soft prior that says "regimes are persistent unless the data strongly disagrees." Without it, EM can drift to a near-uniform transition matrix that flips on residual noise.</p>
     <p style="margin-bottom: 12px;"><strong>Why 10 years of training data.</strong> EM needs a strong signal to find well-separated state Gaussians. A 10-year window for QQQ contains Q4 2018, March 2020, all of 2022, and other clear stress periods — these anchor the "SHORT" state cluster firmly and let the other two regimes sort themselves around it. On a 2-year window of mostly trending data, the model has to invent a bear state from scraps, and the boundaries blur.</p>
     <p style="margin-bottom: 12px;"><strong>Post-hoc smoothing.</strong> After Viterbi decoding, runs shorter than 4 bars are merged into the longer neighboring run — short flickers aren't real regime changes. Note this smoothing applies only to the chart display; the backtest uses unsmoothed causal labels so it can react as fast as the data allows.</p>
@@ -688,15 +688,23 @@ async function fetchQQQ(range) {
 
 // =====================================================================
 // Features
-//   feature 1: mean log return over RET_WINDOW bars  (direction signal)
-//   feature 2: realized volatility over VOL_WINDOW bars (stress signal)
+//   feature 1: mean log return over FAST_RET_WINDOW bars  (fast direction)
+//   feature 2: mean log return over SLOW_RET_WINDOW bars  (trend confirmation)
+//   (10d realized vol still computed for the data table but no longer fed
+//   to the HMM — it dragged SHORT regimes past actual bottoms because vol
+//   stays elevated for weeks after a bear bottom.)
 //
-// Both windows look back only — today's observation uses past data only.
+// The dual-window scheme lets the model distinguish:
+//   - real bull:        fast +, slow +     -> LONG
+//   - real bear:        fast -, slow -     -> SHORT
+//   - bull pullback:    fast -, slow +     -> CHOP (briefly)
+//   - bear recovery:    fast +, slow -     -> CHOP (transitional)
 // =====================================================================
-const RET_WINDOW = 5;
+const FAST_RET_WINDOW = 5;
+const SLOW_RET_WINDOW = 20;
 const VOL_WINDOW = 10;
 
-function buildFeatures(series, useVol) {
+function buildFeatures(series, useSlow) {
   const rows = [];
   for (let i = 1; i < series.length; i++) {
     const r = Math.log(series[i].close / series[i-1].close);
@@ -705,15 +713,19 @@ function buildFeatures(series, useVol) {
       close: series[i].close,
       ret: r,
       retMean: null,
+      retMeanSlow: null,
       volStd: null,
     });
   }
-  const W = Math.max(RET_WINDOW, VOL_WINDOW);
+  const W = Math.max(FAST_RET_WINDOW, SLOW_RET_WINDOW, VOL_WINDOW);
   for (let i = 0; i < rows.length; i++) {
     if (i < W) continue;
-    let sumR = 0;
-    for (let k = i - RET_WINDOW; k < i; k++) sumR += rows[k].ret;
-    rows[i].retMean = sumR / RET_WINDOW;
+    let sR = 0;
+    for (let k = i - FAST_RET_WINDOW; k < i; k++) sR += rows[k].ret;
+    rows[i].retMean = sR / FAST_RET_WINDOW;
+    let sS = 0;
+    for (let k = i - SLOW_RET_WINDOW; k < i; k++) sS += rows[k].ret;
+    rows[i].retMeanSlow = sS / SLOW_RET_WINDOW;
     let mV = 0;
     for (let k = i - VOL_WINDOW; k < i; k++) mV += rows[k].ret;
     mV /= VOL_WINDOW;
@@ -721,8 +733,9 @@ function buildFeatures(series, useVol) {
     for (let k = i - VOL_WINDOW; k < i; k++) v += (rows[k].ret - mV) ** 2;
     rows[i].volStd = Math.sqrt(v / (VOL_WINDOW - 1));
   }
-  const clean = rows.filter(r => r.retMean != null && r.volStd != null);
-  const X = clean.map(r => useVol ? [r.retMean, r.volStd] : [r.retMean]);
+  const clean = rows.filter(r =>
+    r.retMean != null && r.retMeanSlow != null && r.volStd != null);
+  const X = clean.map(r => useSlow ? [r.retMean, r.retMeanSlow] : [r.retMean]);
   return { rows: clean, X };
 }
 
@@ -1263,9 +1276,9 @@ function renderResults({ rows, featureMu, featureSd, result, useVol, range, rest
   const metricRows = [
     ['Mean 5d return',          'muRet'],
     ['Std of 5d return',        'sdRet'],
-    ['Mean 10d vol',            'muVol'],
-    ['Std of 10d vol',          'sdVol'],
-    ['Return ↔ vol correlation','corr'],
+    ['Mean 20d return',         'muVol'],
+    ['Std of 20d return',       'sdVol'],
+    ['Fast ↔ slow correlation', 'corr'],
     ['Stickiness',              'stick'],
   ];
   document.querySelector('#params-table tbody').innerHTML = metricRows.map(([name, key]) => `
@@ -1307,7 +1320,7 @@ function renderResults({ rows, featureMu, featureSd, result, useVol, range, rest
   });
   document.getElementById('training-log').textContent = lines.join('\n');
   document.getElementById('training-summary').textContent =
-    `Range: ${range} · ${T} bars · features: ${useVol ? '5d mean return + 10d realized vol' : '5d mean return only'} · full covariance · stickiness prior (diag=${TRANS_PRIOR_DIAG}) · min-run 4 · ${restarts} restart(s) · best log-likelihood ${result.logLik.toFixed(3)}`;
+    `Range: ${range} · ${T} bars · features: ${useVol ? '5d + 20d mean return' : '5d mean return only'} · full covariance · stickiness prior (diag=${TRANS_PRIOR_DIAG}) · min-run 4 · ${restarts} restart(s) · best log-likelihood ${result.logLik.toFixed(3)}`;
 
   TRAINED = { rows, probByLabel, states, filteredByLabel };
   runAndRenderBacktest();
@@ -1656,6 +1669,7 @@ function renderPriceChart(rows, states) {
                 `Close: $${r.close.toFixed(2)}`,
                 `1d return: ${(r.ret*100).toFixed(2)}%`,
                 `5d mean ret: ${(r.retMean*100).toFixed(2)}%`,
+                `20d mean ret: ${(r.retMeanSlow*100).toFixed(2)}%`,
                 `10d vol: ${(r.volStd*100).toFixed(2)}%`,
                 `Regime: ${states[i]}`
               ];
@@ -1747,6 +1761,7 @@ function renderDataTable(rows, probByLabel, states) {
       <td>${r.close.toFixed(2)}</td>
       <td>${(r.ret*100).toFixed(3)}%</td>
       <td>${(r.retMean*100).toFixed(3)}%</td>
+      <td>${(r.retMeanSlow*100).toFixed(3)}%</td>
       <td>${(r.volStd*100).toFixed(3)}%</td>
       <td>${(p.LONG*100).toFixed(1)}%</td>
       <td>${(p.SHORT*100).toFixed(1)}%</td>
@@ -1770,7 +1785,7 @@ document.getElementById('data-filter').addEventListener('input', e => {
 document.getElementById('csv-btn').addEventListener('click', () => {
   if (!TRAINED) return;
   const { rows, probByLabel, states } = TRAINED;
-  const lines = ['date,close,log_return,mean_return_5d,realized_vol_10d,p_long,p_short,p_chop,regime'];
+  const lines = ['date,close,log_return,mean_return_5d,mean_return_20d,realized_vol_10d,p_long,p_short,p_chop,regime'];
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i], p = probByLabel[i];
     lines.push([
@@ -1778,6 +1793,7 @@ document.getElementById('csv-btn').addEventListener('click', () => {
       r.close.toFixed(4),
       r.ret.toFixed(6),
       r.retMean.toFixed(6),
+      r.retMeanSlow.toFixed(6),
       r.volStd.toFixed(6),
       p.LONG.toFixed(4), p.SHORT.toFixed(4), p.CHOP.toFixed(4),
       states[i]
@@ -1840,7 +1856,7 @@ async function run() {
     const restarts = Math.max(1, Math.min(500, parseInt(document.getElementById('ctl-restarts').value || '5')));
     const displayWin = document.getElementById('ctl-display').value;
 
-    const featureLabel = useVol ? '5d mean ret + 10d vol' : '5d mean ret only';
+    const featureLabel = useVol ? '5d + 20d mean return' : '5d mean return only';
     document.getElementById('loader-sub').textContent =
       `3-state regime model · QQQ · ${featureLabel}`;
 
