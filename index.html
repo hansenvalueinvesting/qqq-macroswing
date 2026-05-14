@@ -291,6 +291,33 @@
     border: 1px solid var(--red); margin-bottom: 16px;
   }
 
+  /* Backtest layout */
+  .bt-grid {
+    display: grid;
+    grid-template-columns: minmax(360px, 1fr) minmax(480px, 1.6fr);
+    gap: 20px; margin-bottom: 20px;
+  }
+  @media (max-width: 1000px) { .bt-grid { grid-template-columns: 1fr; } }
+
+  /* Backtest stats grid */
+  .bt-stats {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+    margin: 16px 0;
+    padding: 14px; background: var(--panel-2); border: 1px solid var(--border);
+  }
+  .bt-stat { display: flex; flex-direction: column; gap: 2px; padding: 4px 2px; }
+  .bt-stat .lbl {
+    font-size: 9px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.15em;
+  }
+  .bt-stat .val {
+    font-family: 'Fraunces', serif; font-size: 16px;
+    font-variant-numeric: tabular-nums;
+  }
+  .bt-stat .val.pos { color: var(--green); }
+  .bt-stat .val.neg { color: var(--red); }
+  .bt-stat .sub  { font-size: 10px; color: var(--muted); }
+
   .training-log {
     max-height: 240px; overflow-y: auto; background: var(--panel-2);
     border: 1px solid var(--border); padding: 10px 12px;
@@ -455,6 +482,37 @@
   <div class="chart-wrap short-h"><canvas id="prob-chart"></canvas></div>
   <div class="note">
     <strong>Why this matters.</strong> The hard label flips abruptly, but conviction shifts gradually. When LONG (green) starts falling and CHOP (gray) rises, the model is losing confidence in the trend before the label flips. This is the model's "soft" view.
+  </div>
+</div>
+
+<!-- Backtest engine -->
+<div class="bt-grid">
+  <div class="panel">
+    <div class="panel-title">Backtest engine <span class="hint">±3× QQQ daily · same-bar exits</span></div>
+    <div class="controls-grid" style="grid-template-columns: 1fr 1fr;">
+      <div class="ctl">
+        <label>Initial portfolio ($)</label>
+        <input type="number" id="bt-initial" value="10000" min="100" step="100">
+      </div>
+      <div class="ctl">
+        <label>Allocation per trade (%)</label>
+        <input type="number" id="bt-alloc" value="100" min="1" max="100">
+      </div>
+    </div>
+
+    <div id="bt-stats" class="bt-stats"></div>
+
+    <div class="note">
+      <strong>Rules.</strong> Buy <strong>TQQQ</strong> on every LONG bar, <strong>SQQQ</strong> on every SHORT bar, hold <strong>cash</strong> on CHOP. Exit on any regime change and immediately enter the new instrument (or sit in cash). Allocation % is applied to total portfolio value at each entry; the rest stays in cash. TQQQ/SQQQ daily returns modeled as ±3× the underlying QQQ simple daily return — captures volatility drag but ignores expense ratios and tracking error.
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">Strategy vs buy-and-hold <span class="hint">equity curves</span></div>
+    <div class="chart-wrap"><canvas id="bt-chart"></canvas></div>
+    <div class="note">
+      Both lines start at your initial portfolio value on the first decoded bar. Gold = HMM strategy equity, gray dashed = buy-and-hold QQQ over the same window.
+    </div>
   </div>
 </div>
 
@@ -947,7 +1005,7 @@ function relabel(result, featureMu, featureSd) {
 const COLORS = { LONG: '#5fb878', SHORT: '#d65a5a', CHOP: '#8a8680' };
 const BAND_ALPHA = { LONG: 'rgba(95, 184, 120, 0.10)', SHORT: 'rgba(214, 90, 90, 0.10)', CHOP: 'rgba(138, 134, 128, 0.08)' };
 
-let priceChart = null, probChart = null;
+let priceChart = null, probChart = null, btChart = null;
 let TRAINED = null;
 
 function setStage(stage, pct, detail) {
@@ -1105,7 +1163,236 @@ function renderResults({ rows, featureMu, featureSd, result, useVol, range, rest
     `Range: ${range} · ${T} bars · features: ${useVol ? '15d mean return + 10d realized vol' : '15d mean return only'} · full covariance · stickiness prior (diag=${TRANS_PRIOR_DIAG}) · min-run ${8} · ${restarts} restart(s) · best log-likelihood ${result.logLik.toFixed(3)}`;
 
   TRAINED = { rows, probByLabel, states };
+  runAndRenderBacktest();
 }
+
+// =====================================================================
+// Backtest engine
+// =====================================================================
+// Per-bar rule: hold TQQQ on LONG, SQQQ on SHORT, cash on CHOP.
+// Exit and (if applicable) re-enter on any regime change, executed at
+// today's close. Allocation% of total portfolio is sized into the new
+// instrument; the rest stays in cash for the duration of that position.
+function runBacktest(rows, states, opts) {
+  const T = rows.length;
+  const initial = opts.initial, allocFrac = opts.allocPct / 100;
+
+  // Synthesize ±3× leveraged daily close series from QQQ daily simple returns.
+  // Compounding the daily multiplier reproduces vol drag the same way the
+  // real ETFs do — it just doesn't include the small ER/tracking error.
+  const tqqq = new Array(T), sqqq = new Array(T);
+  tqqq[0] = 100; sqqq[0] = 100;
+  for (let i = 1; i < T; i++) {
+    const ds = Math.exp(rows[i].ret) - 1;
+    tqqq[i] = tqqq[i-1] * (1 + 3 * ds);
+    sqqq[i] = sqqq[i-1] * (1 - 3 * ds);
+  }
+
+  let cash = initial;
+  let position = null; // { symbol, shares, entryIdx, entryState, entryValue }
+  const equity = new Array(T);
+  const buyHold = new Array(T);
+  const bhStart = rows[0].close;
+  const trades = [];
+
+  for (let i = 0; i < T; i++) {
+    const st = states[i];
+    const tPx = tqqq[i], sPx = sqqq[i];
+
+    // Exit if held position no longer matches state
+    if (position && st !== position.entryState) {
+      const exitPx = position.symbol === 'TQQQ' ? tPx : sPx;
+      const exitValue = position.shares * exitPx;
+      cash += exitValue;
+      trades.push({
+        symbol: position.symbol,
+        entryIdx: position.entryIdx, exitIdx: i,
+        entryDate: rows[position.entryIdx].date, exitDate: rows[i].date,
+        entryValue: position.entryValue, exitValue,
+        pnl: exitValue - position.entryValue,
+        ret: exitValue / position.entryValue - 1,
+      });
+      position = null;
+    }
+
+    // Enter on LONG/SHORT bars when flat
+    if (!position && (st === 'LONG' || st === 'SHORT')) {
+      const symbol = st === 'LONG' ? 'TQQQ' : 'SQQQ';
+      const px = symbol === 'TQQQ' ? tPx : sPx;
+      const totalEquity = cash; // currently flat, so total = cash
+      const alloc = totalEquity * allocFrac;
+      const shares = alloc / px;
+      cash -= alloc;
+      position = { symbol, shares, entryIdx: i, entryState: st, entryValue: alloc };
+    }
+
+    // Mark-to-market
+    let mtm = cash;
+    if (position) {
+      const px = position.symbol === 'TQQQ' ? tPx : sPx;
+      mtm += position.shares * px;
+    }
+    equity[i] = { x: rows[i].date, y: mtm };
+    buyHold[i] = { x: rows[i].date, y: initial * (rows[i].close / bhStart) };
+  }
+
+  // Close any open position at the final bar so stats reflect realized PnL
+  // alongside the mark-to-market on the equity line.
+  if (position) {
+    const exitPx = position.symbol === 'TQQQ' ? tqqq[T-1] : sqqq[T-1];
+    const exitValue = position.shares * exitPx;
+    trades.push({
+      symbol: position.symbol,
+      entryIdx: position.entryIdx, exitIdx: T - 1,
+      entryDate: rows[position.entryIdx].date, exitDate: rows[T-1].date,
+      entryValue: position.entryValue, exitValue,
+      pnl: exitValue - position.entryValue,
+      ret: exitValue / position.entryValue - 1,
+      open: true,
+    });
+  }
+
+  // -----------------------------------------------------------------
+  // Stats
+  // -----------------------------------------------------------------
+  const finalValue = equity[T-1].y;
+  const totalRet = finalValue / initial - 1;
+  const years = T / 252;
+  const cagr = years > 0 ? Math.pow(Math.max(finalValue / initial, 1e-9), 1/years) - 1 : 0;
+
+  const bhFinal = buyHold[T-1].y;
+  const bhRet = bhFinal / initial - 1;
+  const bhCagr = years > 0 ? Math.pow(Math.max(bhFinal / initial, 1e-9), 1/years) - 1 : 0;
+
+  // Daily simple returns of the strategy equity curve
+  const sR = new Array(T - 1);
+  for (let i = 1; i < T; i++) sR[i-1] = equity[i].y / equity[i-1].y - 1;
+  const meanS = sR.reduce((a,b)=>a+b, 0) / Math.max(sR.length, 1);
+  let varS = 0;
+  for (const r of sR) varS += (r - meanS) ** 2;
+  varS /= Math.max(sR.length - 1, 1);
+  const sdS = Math.sqrt(varS);
+  const sharpe = sdS > 0 ? (meanS / sdS) * Math.sqrt(252) : 0;
+
+  // Buy-and-hold Sharpe for comparison
+  const bR = new Array(T - 1);
+  for (let i = 1; i < T; i++) bR[i-1] = buyHold[i].y / buyHold[i-1].y - 1;
+  const meanB = bR.reduce((a,b)=>a+b, 0) / Math.max(bR.length, 1);
+  let varB = 0;
+  for (const r of bR) varB += (r - meanB) ** 2;
+  varB /= Math.max(bR.length - 1, 1);
+  const sdB = Math.sqrt(varB);
+  const bhSharpe = sdB > 0 ? (meanB / sdB) * Math.sqrt(252) : 0;
+
+  // Max drawdown for both curves
+  function maxDD(curve) {
+    let peak = curve[0].y, worst = 0;
+    for (const pt of curve) {
+      if (pt.y > peak) peak = pt.y;
+      const dd = (peak - pt.y) / peak;
+      if (dd > worst) worst = dd;
+    }
+    return worst;
+  }
+  const ddStrat = maxDD(equity);
+  const ddBh = maxDD(buyHold);
+
+  const wins = trades.filter(t => t.pnl > 0).length;
+  const winRate = trades.length > 0 ? wins / trades.length : 0;
+
+  return {
+    equity, buyHold, trades,
+    stats: {
+      finalValue, totalRet, cagr, sharpe, maxDD: ddStrat,
+      bhFinalValue: bhFinal, bhRet, bhCagr, bhSharpe, bhMaxDD: ddBh,
+      numTrades: trades.length, winRate, years,
+    },
+  };
+}
+
+function fmtMoney(x) {
+  return '$' + Math.round(x).toLocaleString('en-US');
+}
+
+function renderBacktestStats(s, initial) {
+  const items = [
+    { lbl: 'Final value',     val: fmtMoney(s.finalValue), sub: `vs B&H ${fmtMoney(s.bhFinalValue)}`,
+      cls: s.finalValue >= s.bhFinalValue ? 'pos' : 'neg' },
+    { lbl: 'Total return',    val: fmtPct2(s.totalRet),    sub: `B&H ${fmtPct2(s.bhRet)}`,
+      cls: s.totalRet >= 0 ? 'pos' : 'neg' },
+    { lbl: 'CAGR',            val: fmtPct2(s.cagr),        sub: `B&H ${fmtPct2(s.bhCagr)}`,
+      cls: s.cagr >= 0 ? 'pos' : 'neg' },
+    { lbl: 'Sharpe ratio',    val: s.sharpe.toFixed(2),    sub: `B&H ${s.bhSharpe.toFixed(2)}`,
+      cls: s.sharpe >= 0 ? 'pos' : 'neg' },
+    { lbl: 'Max drawdown',    val: fmtPct2(-s.maxDD),      sub: `B&H ${fmtPct2(-s.bhMaxDD)}`,
+      cls: 'neg' },
+    { lbl: 'Trades · Win %',  val: `${s.numTrades} · ${fmtPct(s.winRate)}`,
+      sub: `over ${s.years.toFixed(1)}y` },
+  ];
+  document.getElementById('bt-stats').innerHTML = items.map(it => `
+    <div class="bt-stat">
+      <div class="lbl">${it.lbl}</div>
+      <div class="val ${it.cls || ''}">${it.val}</div>
+      <div class="sub">${it.sub || ''}</div>
+    </div>`).join('');
+}
+
+function renderBacktestChart(equity, buyHold) {
+  const ctx = document.getElementById('bt-chart');
+  if (btChart) btChart.destroy();
+  btChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      datasets: [
+        {
+          label: 'HMM strategy',
+          data: equity,
+          borderColor: '#d4a04a',
+          backgroundColor: 'rgba(212, 160, 74, 0.08)',
+          borderWidth: 1.5, pointRadius: 0, tension: 0, fill: true,
+        },
+        {
+          label: 'Buy & hold QQQ',
+          data: buyHold,
+          borderColor: '#6b6862',
+          borderWidth: 1.2, pointRadius: 0, tension: 0,
+          borderDash: [4, 4],
+        },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: { type: 'time', time: { unit: 'year' },
+          grid: { color: '#1f1f1f' },
+          ticks: { color: '#6b6862', font: { size: 10 }, maxRotation: 0, autoSkipPadding: 30 } },
+        y: { grid: { color: '#1f1f1f' },
+          ticks: { color: '#6b6862', font: { size: 10 }, callback: v => '$' + Math.round(v).toLocaleString() } },
+      },
+      plugins: {
+        legend: { labels: { color: '#6b6862', font: { size: 10 }, boxWidth: 12 } },
+        tooltip: {
+          backgroundColor: '#0d0d0d', borderColor: '#1f1f1f', borderWidth: 1,
+          titleColor: '#e8e6e1', bodyColor: '#e8e6e1',
+          callbacks: { label(ctx) { return `${ctx.dataset.label}: $${Math.round(ctx.parsed.y).toLocaleString()}`; } },
+        },
+      },
+    },
+  });
+}
+
+function runAndRenderBacktest() {
+  if (!TRAINED) return;
+  const initial = Math.max(100, parseFloat(document.getElementById('bt-initial').value) || 10000);
+  const allocPct = Math.min(100, Math.max(1, parseFloat(document.getElementById('bt-alloc').value) || 100));
+  const result = runBacktest(TRAINED.rows, TRAINED.states, { initial, allocPct });
+  renderBacktestStats(result.stats, initial);
+  renderBacktestChart(result.equity, result.buyHold);
+}
+
+document.getElementById('bt-initial').addEventListener('input', runAndRenderBacktest);
+document.getElementById('bt-alloc').addEventListener('input', runAndRenderBacktest);
 
 function renderPriceChart(rows, states) {
   const ctx = document.getElementById('price-chart');
