@@ -422,8 +422,8 @@
       <select id="ctl-display">
         <option value="1y">Last 1 year</option>
         <option value="3y">Last 3 years</option>
-        <option value="5y">Last 5 years</option>
-        <option value="10y" selected>Last 10 years</option>
+        <option value="5y" selected>Last 5 years</option>
+        <option value="10y">Last 10 years</option>
         <option value="all">All trained bars</option>
       </select>
     </div>
@@ -1742,13 +1742,13 @@ async function ensureFullSeries() {
 }
 
 function initDefaultTrainRange(series) {
-  // Default: train on the entire Yahoo history (first bar to last bar). Out-of-
-  // sample evaluation isn't preserved with this default, but on QQQ the modern
-  // volatility regime is so different from 2007-2017 SPY-style data that the
-  // model needs to see the whole history to label modern bars sensibly.
+  // Default: train on all history up to exactly 5 years before the last bar,
+  // so the default display window ("Last 5 years") is fully out-of-sample
+  // relative to the training range.
   const first = series[0].date;
   const last = series[series.length - 1].date;
-  TRAIN_RANGE = { start: new Date(first), end: new Date(last) };
+  const trainEnd = yearsAgo(last, 5);
+  TRAIN_RANGE = { start: new Date(first), end: trainEnd };
   document.getElementById('ctl-train-start').value = isoDate(TRAIN_RANGE.start);
   document.getElementById('ctl-train-end').value = isoDate(TRAIN_RANGE.end);
 }
