@@ -1742,17 +1742,13 @@ async function ensureFullSeries() {
 }
 
 function initDefaultTrainRange(series) {
-  // Default: 15-year window ending 5 years ago — i.e. [today - 20y, today - 5y].
-  // Captures multiple full regime cycles (sized for modern QQQ vol levels) and
-  // leaves the most recent 5 years available for out-of-sample evaluation.
+  // Default: train on the entire Yahoo history (first bar to last bar). Out-of-
+  // sample evaluation isn't preserved with this default, but on QQQ the modern
+  // volatility regime is so different from 2007-2017 SPY-style data that the
+  // model needs to see the whole history to label modern bars sensibly.
   const first = series[0].date;
   const last = series[series.length - 1].date;
-  const defStart = yearsAgo(last, 20);
-  const defEnd = yearsAgo(last, 5);
-  TRAIN_RANGE = {
-    start: clampDate(defStart, first, last),
-    end:   clampDate(defEnd,   first, last),
-  };
+  TRAIN_RANGE = { start: new Date(first), end: new Date(last) };
   document.getElementById('ctl-train-start').value = isoDate(TRAIN_RANGE.start);
   document.getElementById('ctl-train-end').value = isoDate(TRAIN_RANGE.end);
 }
