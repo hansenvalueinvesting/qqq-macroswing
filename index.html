@@ -121,6 +121,7 @@
   }
   .signal-state.long { color: var(--green); }
   .signal-state.chop { color: var(--gray); }
+  .signal-state.cash { color: var(--gray); }
   .signal-state.short { color: var(--red); }
   .signal-conf { font-size: 12px; color: var(--text); margin-bottom: 18px; }
   .prob-bars { margin-bottom: 18px; }
@@ -208,6 +209,7 @@
     letter-spacing: 0.12em; text-transform: uppercase;
   }
   .pill.long { color: var(--green); border: 1px solid var(--green); }
+  .pill.cash { color: var(--gray); border: 1px solid var(--gray); }
   .pill.chop { color: var(--gray); border: 1px solid var(--gray); }
   .pill.short { color: var(--red); border: 1px solid var(--red); }
 
@@ -470,7 +472,7 @@
       </div>
     </div>
     <div class="note">
-      <strong>What this means.</strong> The label is the model's best guess about which hidden regime QQQ has been in over the past few days. The probabilities are the model's smoothed belief about <em>today's</em> regime given everything it has seen.
+      <strong>What this means.</strong> The label is the model's best guess about today's regime using only data through today (causal forward filter). The probabilities are that same filtered posterior — exactly what the backtest sees when it decides whether to be long, short, or in cash.
     </div>
   </div>
 
@@ -526,12 +528,12 @@
   <div class="chart-wrap tall"><canvas id="price-chart"></canvas></div>
   <div class="chart-hint">scroll · pinch to zoom · drag to pan · hover for per-bar detail</div>
   <div class="note">
-    <strong>Reading the chart.</strong> The line is QQQ adjusted close. Green bands = LONG (Bull), red = SHORT (Bear). The model only ever assigns one of these two states — there is no neutral state. Bands come from the Viterbi path — the single most-likely sequence of hidden states given the observations.
+    <strong>Reading the chart.</strong> The line is QQQ adjusted close. Green bands = LONG (Bull), red = SHORT (Bear), unshaded = CASH (neither state clears the backtest confidence threshold). Bands are the causal filtered labels — at each bar only past observations are used, so the picture matches what the backtest actually trades.
   </div>
 </div>
 
 <div class="panel full" style="margin-bottom: 20px;">
-  <div class="panel-title">Regime probability ribbon <span class="hint">P(state) per day · smoothed</span></div>
+  <div class="panel-title">Regime probability ribbon <span class="hint">P(state) per day · causal filtered</span></div>
   <div class="chart-wrap short-h"><canvas id="prob-chart"></canvas></div>
   <div class="note">
     <strong>Why this matters.</strong> The hard label flips abruptly, but conviction shifts gradually. When LONG (green) starts losing share to SHORT (red), the model is losing confidence in the bull regime before the hard label flips. This is the model's "soft" view.
@@ -619,7 +621,7 @@
     </table>
   </div>
   <div class="note">
-    <strong>Transparency.</strong> 1d return = ln(Close / PrevClose) — the only observation fed to the HMM. P(state) = smoothed posterior probability from forward-backward (LONG and SHORT sum to 1.00). Regime = Viterbi hard label (no post-hoc smoothing).
+    <strong>Transparency.</strong> 1d return = ln(Close / PrevClose) — the only observation fed to the HMM. P(state) = causal filtered posterior (forward filter only; LONG and SHORT sum to 1.00). Regime = LONG/SHORT when the higher filtered probability clears the backtest threshold, otherwise CASH.
   </div>
 </div>
 
@@ -638,7 +640,7 @@
     <p style="margin-bottom: 12px;"><strong>Training.</strong> <strong>Baum-Welch</strong>, an Expectation-Maximization algorithm:
       (E-step) given current parameters, compute the probability of being in each state on each day via the forward-backward algorithm;
       (M-step) re-estimate π, A, μ, σ² using those probabilities as soft assignments. Repeat until log-likelihood stops improving. We do several random initializations and keep the best fit.</p>
-    <p style="margin-bottom: 12px;"><strong>Decoding.</strong> The <strong>Viterbi algorithm</strong> finds the single most likely sequence of regimes (the colored bands on the chart). The probability ribbon below the chart shows the softer per-day posteriors from forward-backward.</p>
+    <p style="margin-bottom: 12px;"><strong>Decoding.</strong> The displayed regime at each bar comes from the <strong>causal forward filter</strong> — the posterior P(state_t | r_1…r_t) using only past observations. The probability ribbon below the chart plots those same filtered probabilities, and the backtest trades them directly with the configured confidence threshold.</p>
     <p style="margin-bottom: 12px;"><strong>Labeling.</strong> The two trained states are anonymous numbers; we relabel by mean return — higher mean → LONG (Bull), lower mean → SHORT (Bear) — so colors stay consistent across retrainings.</p>
     <p style="margin-bottom: 12px;"><strong>Training caveat.</strong> Many HMM regime papers retrain the model daily on a rolling window. This is computationally impractical in-browser — we train once on the user-selected training range and apply the trained model to the display window. Expect some parameter look-ahead unless the display window is fully out-of-sample relative to the training range.</p>
     <p><strong>What it is not.</strong> The regime is descriptive — it explains what likely happened, not what will happen next. The most recent label can revise as new bars arrive (the model re-smooths the whole history). This is not investment advice.</p>
@@ -1080,7 +1082,7 @@ function relabel(result, featureMu, featureSd) {
 // =====================================================================
 const COLORS = { LONG: '#5fb878', SHORT: '#d65a5a' };
 // Two states only — LONG and SHORT — shaded green and red.
-const BAND_ALPHA = { LONG: 'rgba(95, 184, 120, 0.22)', SHORT: 'rgba(214, 90, 90, 0.22)' };
+const BAND_ALPHA = { LONG: 'rgba(95, 184, 120, 0.22)', SHORT: 'rgba(214, 90, 90, 0.22)', CASH: 'rgba(0,0,0,0)' };
 
 let priceChart = null, probChart = null, btChart = null, trainSelChart = null;
 let TRAINED = null;
@@ -1145,15 +1147,10 @@ function buildRegimeBands(rows, states) {
 function renderResults({ rows, featureMu, featureSd, result, range, restarts }) {
   const T = rows.length;
   const labelOf = relabel(result, featureMu, featureSd);
-  // Chart hard labels: Viterbi path — single most-likely sequence of hidden
-  // states given all observations. Matches the paper. No min-run smoothing.
-  const states = result.path.map(k => labelOf[k]);
-  const probByLabel = result.gamma.map(row => {
-    const o = { LONG: 0, SHORT: 0 };
-    for (let k = 0; k < row.length; k++) o[labelOf[k]] = row[k];
-    return o;
-  });
-  // Causal filtered posterior used by the backtest — only past data per bar.
+  // Causal filtered posterior per label — only past data per bar. The display
+  // (chart bands, today's signal, probability chart, data table) uses the
+  // same series the backtest trades on, so the picture always matches the
+  // strategy.
   const filteredByLabel = result.filteredGamma.map(row => {
     const o = { LONG: 0, SHORT: 0 };
     for (let k = 0; k < row.length; k++) o[labelOf[k]] = row[k];
@@ -1168,19 +1165,6 @@ function renderResults({ rows, featureMu, featureSd, result, range, restarts }) 
   chgEl.textContent = (chgPct >= 0 ? '+' : '') + chgPct.toFixed(2) + '%';
   chgEl.className = 'change ' + (chgPct >= 0 ? 'up' : 'down');
 
-  const today = states[T - 1];
-  const todayP = probByLabel[T - 1];
-  const ss = document.getElementById('signal-state');
-  ss.textContent = today;
-  ss.className = 'signal-state ' + today.toLowerCase();
-  document.getElementById('signal-conf').innerHTML =
-    `Confidence (smoothed posterior): <strong>${fmtPct(todayP[today])}</strong>`;
-  document.getElementById('prob-bars').innerHTML = ['LONG', 'SHORT'].map(s => `
-    <div class="prob-row ${s.toLowerCase()}">
-      <div class="pname">${s}</div>
-      <div class="prob-track"><div class="prob-fill ${s.toLowerCase()}" style="width:${(todayP[s]*100).toFixed(1)}%"></div></div>
-      <div class="pval">${fmtPct(todayP[s])}</div>
-    </div>`).join('');
   document.getElementById('meta-date').textContent = last.date.toISOString().slice(0,10);
   document.getElementById('meta-trained').textContent = new Date().toISOString().slice(11,19) + ' UTC';
   document.getElementById('meta-bars').textContent = String(T);
@@ -1241,10 +1225,6 @@ function renderResults({ rows, featureMu, featureSd, result, range, restarts }) 
     }
   }
 
-  renderPriceChart(rows, states);
-  renderProbChart(rows, probByLabel);
-  renderDataTable(rows, probByLabel, states);
-
   // Training log
   const lines = [];
   lines.push(`[best] restart=${result.restart+1}  iters=${result.iters}  log-likelihood=${result.logLik.toFixed(4)}`);
@@ -1254,10 +1234,31 @@ function renderResults({ rows, featureMu, featureSd, result, range, restarts }) 
   });
   document.getElementById('training-log').textContent = lines.join('\n');
   document.getElementById('training-summary').textContent =
-    `Range: ${range} · ${T} bars · 2 states · univariate 1d return · no transition prior · no min-run · Viterbi decode · ${restarts} restart(s) · best log-likelihood ${result.logLik.toFixed(3)}`;
+    `Range: ${range} · ${T} bars · 2 states · univariate 1d return · no transition prior · no min-run · causal filtered decode · ${restarts} restart(s) · best log-likelihood ${result.logLik.toFixed(3)}`;
 
-  TRAINED = { rows, probByLabel, states, filteredByLabel };
+  TRAINED = { rows, filteredByLabel };
   runAndRenderBacktest();
+}
+
+// Renders the today/probability panels and the data table for the given
+// tradingStates + filtered posteriors. Threshold-aware so a sub-threshold bar
+// shows as CASH everywhere (chart bands, today's pill, table).
+function renderSignalPanel(rows, filteredByLabel, tradingStates) {
+  const T = rows.length;
+  const today = tradingStates[T - 1];
+  const todayP = filteredByLabel[T - 1];
+  const ss = document.getElementById('signal-state');
+  ss.textContent = today;
+  ss.className = 'signal-state ' + today.toLowerCase();
+  const confSrc = today === 'CASH' ? Math.max(todayP.LONG, todayP.SHORT) : todayP[today];
+  document.getElementById('signal-conf').innerHTML =
+    `Confidence (causal filtered): <strong>${fmtPct(confSrc)}</strong>`;
+  document.getElementById('prob-bars').innerHTML = ['LONG', 'SHORT'].map(s => `
+    <div class="prob-row ${s.toLowerCase()}">
+      <div class="pname">${s}</div>
+      <div class="prob-track"><div class="prob-fill ${s.toLowerCase()}" style="width:${(todayP[s]*100).toFixed(1)}%"></div></div>
+      <div class="pval">${fmtPct(todayP[s])}</div>
+    </div>`).join('');
 }
 
 // =====================================================================
@@ -1511,6 +1512,13 @@ function runAndRenderBacktest() {
   const longInst = tqqqOn ? 'tqqq' : (qqqOn ? 'qqq' : 'off');
   const tradeShort = document.getElementById('bt-sqqq').checked;
   const tradingStates = causalLabels(TRAINED.filteredByLabel, thresholdPct / 100);
+  // Keep the chart, today panel, prob chart, and data table in lock-step with
+  // whatever the backtest actually trades.
+  renderSignalPanel(TRAINED.rows, TRAINED.filteredByLabel, tradingStates);
+  renderPriceChart(TRAINED.rows, tradingStates);
+  renderProbChart(TRAINED.rows, TRAINED.filteredByLabel);
+  renderDataTable(TRAINED.rows, TRAINED.filteredByLabel, tradingStates);
+  TRAINED.tradingStates = tradingStates;
   const result = runBacktest(TRAINED.rows, tradingStates, { initial, allocPct, longInst, tradeShort });
   renderBacktestStats(result.stats, initial);
   renderBacktestChart(result.equity, result.buyHold);
@@ -1712,16 +1720,16 @@ document.getElementById('data-filter').addEventListener('input', e => {
 
 document.getElementById('csv-btn').addEventListener('click', () => {
   if (!TRAINED) return;
-  const { rows, probByLabel, states } = TRAINED;
+  const { rows, filteredByLabel, tradingStates } = TRAINED;
   const lines = ['date,close,log_return,p_long,p_short,regime'];
   for (let i = 0; i < rows.length; i++) {
-    const r = rows[i], p = probByLabel[i];
+    const r = rows[i], p = filteredByLabel[i];
     lines.push([
       r.date.toISOString().slice(0,10),
       r.close.toFixed(4),
       r.ret.toFixed(6),
       p.LONG.toFixed(4), p.SHORT.toFixed(4),
-      states[i]
+      tradingStates[i]
     ].join(','));
   }
   const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
