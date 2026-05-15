@@ -215,6 +215,7 @@
     display: grid; grid-template-columns: 80px repeat(3, 1fr); gap: 4px;
     font-size: 12px;
   }
+  .tm.tm-2x2 { grid-template-columns: 80px repeat(2, 1fr); }
   .tm .hdr {
     font-size: 9px; color: var(--muted); text-transform: uppercase;
     letter-spacing: 0.15em; padding: 6px; text-align: center;
@@ -432,14 +433,7 @@
 
 <div class="panel full" style="margin-bottom: 20px;">
   <div class="panel-title">Model controls <span class="hint">change &amp; retrain</span></div>
-  <div class="controls-grid">
-    <div class="ctl">
-      <label>Features</label>
-      <select id="ctl-features">
-        <option value="ret">1d return only</option>
-        <option value="ret_vol" selected>1d return + 10d trend-MSE (paper feature pair)</option>
-      </select>
-    </div>
+  <div class="controls-grid" style="grid-template-columns: 1fr 1fr;">
     <div class="ctl">
       <label>EM iterations (max)</label>
       <input type="number" id="ctl-iters" value="75" min="10" max="500">
@@ -487,25 +481,23 @@
         <tr>
           <th>Metric</th>
           <th>LONG</th>
-          <th>CHOP</th>
           <th>SHORT</th>
         </tr>
       </thead>
       <tbody></tbody>
     </table>
     <div class="note">
-      <strong>What's here.</strong> For each hidden state the model learned a full-covariance bivariate Gaussian over (1-day log return, 10-day trend-MSE). <strong>Means</strong> are the typical values inside that regime, <strong>std</strong> rows are the spread. <strong>Return ↔ vol correlation</strong> is the within-regime cross-feature correlation — full covariance captures this; a diagonal model would throw it away. <strong>Stickiness</strong> = expected duration in trading days, 1 / (1 − P(stay)).
+      <strong>What's here.</strong> For each hidden state the model learned a univariate Gaussian over the 1-day log return. <strong>Mean</strong> is the average daily return inside that regime; <strong>Std</strong> is the typical daily spread (bear regimes typically have much higher variance than bull regimes — this is the dominant separator). <strong>Initial P(state)</strong> is how likely the chain started in that state. <strong>Stickiness</strong> = expected duration in trading days, 1 / (1 − P(stay)).
     </div>
   </div>
 
   <div class="panel">
     <div class="panel-title">Transition matrix <span class="hint">today → tomorrow</span></div>
-    <div class="tm" id="tm">
+    <div class="tm tm-2x2" id="tm">
       <div></div>
-      <div class="hdr">→ LONG</div><div class="hdr">→ SHORT</div><div class="hdr">→ CHOP</div>
-      <div class="rowlbl">LONG →</div><div class="cell" id="tm-LL">—</div><div class="cell" id="tm-LS">—</div><div class="cell" id="tm-LC">—</div>
-      <div class="rowlbl">SHORT →</div><div class="cell" id="tm-SL">—</div><div class="cell" id="tm-SS">—</div><div class="cell" id="tm-SC">—</div>
-      <div class="rowlbl">CHOP →</div><div class="cell" id="tm-CL">—</div><div class="cell" id="tm-CS">—</div><div class="cell" id="tm-CC">—</div>
+      <div class="hdr">→ LONG</div><div class="hdr">→ SHORT</div>
+      <div class="rowlbl">LONG →</div><div class="cell" id="tm-LL">—</div><div class="cell" id="tm-LS">—</div>
+      <div class="rowlbl">SHORT →</div><div class="cell" id="tm-SL">—</div><div class="cell" id="tm-SS">—</div>
     </div>
     <div class="tm-legend">rows = today · cols = tomorrow · each row sums to 1.00</div>
     <div class="note">
@@ -528,14 +520,13 @@
     </div>
     <div class="legend-inline">
       <span><span class="sw long"></span>LONG</span>
-      <span><span class="sw chop"></span>CHOP</span>
       <span><span class="sw short"></span>SHORT</span>
     </div>
   </div>
   <div class="chart-wrap tall"><canvas id="price-chart"></canvas></div>
   <div class="chart-hint">scroll · pinch to zoom · drag to pan · hover for per-bar detail</div>
   <div class="note">
-    <strong>Reading the chart.</strong> The line is QQQ adjusted close. Green bands = LONG, red = SHORT, gray = CHOP. Bands come from the Viterbi path — the single most-likely sequence of hidden states given the observations. No post-hoc smoothing (paper doesn't use any).
+    <strong>Reading the chart.</strong> The line is QQQ adjusted close. Green bands = LONG (Bull), red = SHORT (Bear). The model only ever assigns one of these two states — there is no neutral state. Bands come from the Viterbi path — the single most-likely sequence of hidden states given the observations.
   </div>
 </div>
 
@@ -543,7 +534,7 @@
   <div class="panel-title">Regime probability ribbon <span class="hint">P(state) per day · smoothed</span></div>
   <div class="chart-wrap short-h"><canvas id="prob-chart"></canvas></div>
   <div class="note">
-    <strong>Why this matters.</strong> The hard label flips abruptly, but conviction shifts gradually. When LONG (green) starts falling and CHOP (gray) rises, the model is losing confidence in the trend before the label flips. This is the model's "soft" view.
+    <strong>Why this matters.</strong> The hard label flips abruptly, but conviction shifts gradually. When LONG (green) starts losing share to SHORT (red), the model is losing confidence in the bull regime before the hard label flips. This is the model's "soft" view.
   </div>
 </div>
 
@@ -620,38 +611,36 @@
     <table id="data-table">
       <thead>
         <tr>
-          <th>Date</th><th>Close</th><th>1d return</th><th>10d trend-MSE (×10⁴)</th>
-          <th>P(LONG)</th><th>P(SHORT)</th><th>P(CHOP)</th><th>Regime</th>
+          <th>Date</th><th>Close</th><th>1d return</th>
+          <th>P(LONG)</th><th>P(SHORT)</th><th>Regime</th>
         </tr>
       </thead>
       <tbody></tbody>
     </table>
   </div>
   <div class="note">
-    <strong>Transparency.</strong> 1d return = ln(Close / PrevClose). 10d trend-MSE = mean squared deviation of log-close from its 10-day moving average over the prior 10 bars — the paper's volatility / trend-deviation feature, expressed in log-price units so it doesn't drift with the absolute price level. Shown ×10⁴ for readability. P(state) = smoothed posterior probability from forward-backward. Regime = Viterbi hard label (no post-hoc smoothing).
+    <strong>Transparency.</strong> 1d return = ln(Close / PrevClose) — the only observation fed to the HMM. P(state) = smoothed posterior probability from forward-backward (LONG and SHORT sum to 1.00). Regime = Viterbi hard label (no post-hoc smoothing).
   </div>
 </div>
 
 <details class="panel full" style="margin-bottom: 20px;">
   <summary class="panel-title" style="border: none; padding: 0; margin: 0;">How the model works ▸</summary>
   <div style="margin-top: 16px; font-size: 12px; line-height: 1.8; color: var(--text);">
-    <p style="margin-bottom: 12px;"><strong>The idea.</strong> A Hidden Markov Model (HMM) assumes the market is always in one of a few invisible "regimes" (here: LONG, SHORT, CHOP), and each regime produces returns with a characteristic mean and volatility. We can't observe the regime directly — only the returns — so we infer it.</p>
+    <p style="margin-bottom: 12px;"><strong>The idea.</strong> A Hidden Markov Model (HMM) assumes the market is always in one of a few invisible "regimes" (here: just <em>Bull</em> / <em>Bear</em>, or LONG / SHORT), and each regime produces daily returns with a characteristic mean and variance. We can't observe the regime directly — only the returns — so we infer it.</p>
     <p style="margin-bottom: 12px;"><strong>The math, in three pieces.</strong></p>
     <ol style="margin-left: 20px; margin-bottom: 12px;">
       <li><strong>Initial probabilities π</strong> — chance the chain starts in each state.</li>
-      <li><strong>Transition matrix A</strong> — chance of moving from state i to state j between bars.</li>
-      <li><strong>Emission distributions</strong> — each state has a <em>full-covariance</em> bivariate Gaussian over (1-day log return, 10-day trend-MSE). Full covariance is important: bear days are jointly low-return <em>and</em> high-vol, and that cross-feature correlation is exactly what separates a real bear cluster from "low-return-but-calm" chop. A diagonal model throws this signal away.</li>
+      <li><strong>Transition matrix A</strong> — 2×2 here, chance of moving from state i to state j between bars.</li>
+      <li><strong>Emission distributions</strong> — each state has a univariate Gaussian over the 1-day log return. Two parameters per state (mean μ, variance σ²) — no other features.</li>
     </ol>
-    <p style="margin-bottom: 12px;"><strong>The features.</strong> The return feature is the 1-day log return — exactly the paper's "daily return" feature. The vol / trend-deviation feature is the 10-day MSE of log-close against its 10-day moving average — exactly the paper's specification, but using log-close instead of raw close so the feature stays scale-invariant over QQQ's 7× price growth across the training window (the paper's SPY only grew ~2× so they didn't have this problem).</p>
-    <p style="margin-bottom: 12px;"><strong>No transition prior.</strong> The M-step uses straight maximum-likelihood estimates for the transition matrix — no Dirichlet pseudocounts. The paper relies on a separate confidence-threshold gate for trading decisions rather than baking stickiness into the HMM itself.</p>
-    <p style="margin-bottom: 12px;"><strong>Why 10 years of training data.</strong> EM needs a strong signal to find well-separated state Gaussians. A 10-year window for QQQ contains Q4 2018, March 2020, all of 2022, and other clear stress periods — these anchor the "SHORT" state cluster firmly and let the other two regimes sort themselves around it. On a 2-year window of mostly trending data, the model has to invent a bear state from scraps, and the boundaries blur.</p>
-    <p style="margin-bottom: 12px;"><strong>Decoder.</strong> Chart shows the Viterbi path — the single most-likely sequence of hidden states given the observations. Same decoder the paper uses. No post-hoc min-run smoothing.</p>
-    <p style="margin-bottom: 12px;"><strong>Training caveat.</strong> The paper retrained the HMM every day on the most recent 2707 trading days (rolling). This is computationally impractical in-browser — we train once on the user-selected training range and apply the trained model to the display window. So expect some parameter look-ahead unless the display window is fully out-of-sample relative to the training range.</p>
-    <p style="margin-bottom: 12px;"><strong>Training.</strong> We run <strong>Baum-Welch</strong>, an Expectation-Maximization algorithm:
+    <p style="margin-bottom: 12px;"><strong>The feature.</strong> Single observation per day: <code>r_t = ln(Close_t / Close_{t-1})</code>. No vol feature, no trend-MSE, no smoothing — just raw daily log return. Yuan/Mitra (2019) show on FTSE 100 and Euro Stoxx 50 data that adding more features doesn't beat this on BIC; the dominant signal separating bull from bear is the <em>variance</em> of returns, not their mean (bear regimes have ~70× the daily-return variance of bull regimes in their fit).</p>
+    <p style="margin-bottom: 12px;"><strong>Why 2 states and not 3+.</strong> Yuan/Mitra formally test K=2, 3, 4 with AIC and BIC. AIC picks K=4 (it always rewards complexity less heavily), but BIC — which penalizes complexity more strictly — picks K=2. They go with K=2 because (a) BIC is the stricter test, (b) parameter-estimation error compounds with more states, and (c) the third state in K=3 doesn't carve a clean cluster (their fit comment: "the other two states fit well except state 3"). Our previous K=3 setups echoed this — the CHOP state kept absorbing whichever days didn't fit cleanly. Going to K=2 eliminates that whole problem.</p>
+    <p style="margin-bottom: 12px;"><strong>Training.</strong> <strong>Baum-Welch</strong>, an Expectation-Maximization algorithm:
       (E-step) given current parameters, compute the probability of being in each state on each day via the forward-backward algorithm;
-      (M-step) re-estimate π, A, and the Gaussians using those probabilities as soft assignments. Repeat until log-likelihood stops improving meaningfully. We do this from several random initializations and keep the best fit.</p>
-    <p style="margin-bottom: 12px;"><strong>Decoding.</strong> The <strong>Viterbi algorithm</strong> finds the single most likely sequence of regimes (the colored bands on the chart). The probability ribbon shows the softer per-day posteriors.</p>
-    <p style="margin-bottom: 12px;"><strong>Labeling.</strong> The three trained states are anonymous numbers; we relabel by mean return — highest = LONG, lowest = SHORT, middle = CHOP — so the colors stay consistent across retrainings.</p>
+      (M-step) re-estimate π, A, μ, σ² using those probabilities as soft assignments. Repeat until log-likelihood stops improving. We do several random initializations and keep the best fit.</p>
+    <p style="margin-bottom: 12px;"><strong>Decoding.</strong> The <strong>Viterbi algorithm</strong> finds the single most likely sequence of regimes (the colored bands on the chart). The probability ribbon below the chart shows the softer per-day posteriors from forward-backward.</p>
+    <p style="margin-bottom: 12px;"><strong>Labeling.</strong> The two trained states are anonymous numbers; we relabel by mean return — higher mean → LONG (Bull), lower mean → SHORT (Bear) — so colors stay consistent across retrainings.</p>
+    <p style="margin-bottom: 12px;"><strong>Training caveat.</strong> Many HMM regime papers retrain the model daily on a rolling window. This is computationally impractical in-browser — we train once on the user-selected training range and apply the trained model to the display window. Expect some parameter look-ahead unless the display window is fully out-of-sample relative to the training range.</p>
     <p><strong>What it is not.</strong> The regime is descriptive — it explains what likely happened, not what will happen next. The most recent label can revise as new bars arrive (the model re-smooths the whole history). This is not investment advice.</p>
   </div>
 </details>
@@ -688,44 +677,22 @@ async function fetchQQQ(range) {
 }
 
 // =====================================================================
-// Features — Wang/Lin/Mikhelson (2020) feature pair:
-//   feature 1: 1-day log return  (direction)
-//   feature 2: 10-day MSE of log-close vs its 10-day MA  (vol / trend
-//             deviation)
-// We use log-close instead of raw close in the MSE because QQQ grows ~7x
-// over the 25y window and raw-price MSE would be confounded by absolute
-// price level. The paper's SPY only grew ~2x over its 10.7y window so
-// they didn't have this problem.
+// Features — Yuan/Mitra (2019) univariate setup:
+//   feature 1: 1-day log return  (the *only* observation)
 // =====================================================================
-const VOL_WINDOW = 10;
 
-function buildFeatures(series, useVol) {
+function buildFeatures(series) {
   const rows = [];
   for (let i = 1; i < series.length; i++) {
     const r = Math.log(series[i].close / series[i-1].close);
     rows.push({
       date: series[i].date,
       close: series[i].close,
-      logClose: Math.log(series[i].close),
       ret: r,
-      volMSE: null,
     });
   }
-  for (let i = 0; i < rows.length; i++) {
-    if (i < VOL_WINDOW - 1) continue;
-    let mean = 0;
-    for (let k = i - VOL_WINDOW + 1; k <= i; k++) mean += rows[k].logClose;
-    mean /= VOL_WINDOW;
-    let mse = 0;
-    for (let k = i - VOL_WINDOW + 1; k <= i; k++) {
-      const d = rows[k].logClose - mean;
-      mse += d * d;
-    }
-    rows[i].volMSE = mse / VOL_WINDOW;
-  }
-  const clean = rows.filter(r => r.volMSE != null);
-  const X = clean.map(r => useVol ? [r.ret, r.volMSE] : [r.ret]);
-  return { rows: clean, X };
+  const X = rows.map(r => [r.ret]);
+  return { rows, X };
 }
 
 function standardize(X) {
@@ -1096,24 +1063,24 @@ function smoothPath(path, minRun) {
 // =====================================================================
 // Relabel
 // =====================================================================
+// Relabel anonymous trained states by mean return: highest mean -> LONG
+// (Bull), lowest mean -> SHORT (Bear). Two-state model — no CHOP.
 function relabel(result, featureMu, featureSd) {
   const K = result.model.mu.length;
   const meansRetReal = result.model.mu.map(m => m[0] * featureSd[0] + featureMu[0]);
   const sorted = meansRetReal.map((m, k) => ({ m, k })).sort((a, b) => b.m - a.m);
   const labelOf = new Array(K);
   labelOf[sorted[0].k] = 'LONG';
-  labelOf[sorted[K-1].k] = 'SHORT';
-  labelOf[sorted[1].k] = 'CHOP';
+  labelOf[sorted[sorted.length - 1].k] = 'SHORT';
   return labelOf;
 }
 
 // =====================================================================
 // Render
 // =====================================================================
-const COLORS = { LONG: '#5fb878', SHORT: '#d65a5a', CHOP: '#8a8680' };
-// All three states get visible shading so the chart shows LONG / CHOP / SHORT
-// as distinct colored bands.
-const BAND_ALPHA = { LONG: 'rgba(95, 184, 120, 0.22)', SHORT: 'rgba(214, 90, 90, 0.22)', CHOP: 'rgba(138, 134, 128, 0.18)' };
+const COLORS = { LONG: '#5fb878', SHORT: '#d65a5a' };
+// Two states only — LONG and SHORT — shaded green and red.
+const BAND_ALPHA = { LONG: 'rgba(95, 184, 120, 0.22)', SHORT: 'rgba(214, 90, 90, 0.22)' };
 
 let priceChart = null, probChart = null, btChart = null, trainSelChart = null;
 let TRAINED = null;
@@ -1175,20 +1142,20 @@ function buildRegimeBands(rows, states) {
   return bands;
 }
 
-function renderResults({ rows, featureMu, featureSd, result, useVol, range, restarts }) {
+function renderResults({ rows, featureMu, featureSd, result, range, restarts }) {
   const T = rows.length;
   const labelOf = relabel(result, featureMu, featureSd);
   // Chart hard labels: Viterbi path — single most-likely sequence of hidden
   // states given all observations. Matches the paper. No min-run smoothing.
   const states = result.path.map(k => labelOf[k]);
   const probByLabel = result.gamma.map(row => {
-    const o = { LONG: 0, SHORT: 0, CHOP: 0 };
+    const o = { LONG: 0, SHORT: 0 };
     for (let k = 0; k < row.length; k++) o[labelOf[k]] = row[k];
     return o;
   });
   // Causal filtered posterior used by the backtest — only past data per bar.
   const filteredByLabel = result.filteredGamma.map(row => {
-    const o = { LONG: 0, SHORT: 0, CHOP: 0 };
+    const o = { LONG: 0, SHORT: 0 };
     for (let k = 0; k < row.length; k++) o[labelOf[k]] = row[k];
     return o;
   });
@@ -1208,7 +1175,7 @@ function renderResults({ rows, featureMu, featureSd, result, useVol, range, rest
   ss.className = 'signal-state ' + today.toLowerCase();
   document.getElementById('signal-conf').innerHTML =
     `Confidence (smoothed posterior): <strong>${fmtPct(todayP[today])}</strong>`;
-  document.getElementById('prob-bars').innerHTML = ['LONG', 'SHORT', 'CHOP'].map(s => `
+  document.getElementById('prob-bars').innerHTML = ['LONG', 'SHORT'].map(s => `
     <div class="prob-row ${s.toLowerCase()}">
       <div class="pname">${s}</div>
       <div class="prob-track"><div class="prob-fill ${s.toLowerCase()}" style="width:${(todayP[s]*100).toFixed(1)}%"></div></div>
@@ -1219,34 +1186,22 @@ function renderResults({ rows, featureMu, featureSd, result, useVol, range, rest
   document.getElementById('meta-bars').textContent = String(T);
   document.getElementById('meta-ll').textContent = result.logLik.toFixed(2);
 
-  // Params table (transposed: rows = metric, cols = state). Reads from the
-  // learned full covariance Sigma_k and converts back from standardized
-  // space to the real feature units.
-  const D = result.model.mu[0].length;
-  const kFor = { LONG: null, SHORT: null, CHOP: null };
+  // Params table (transposed: rows = metric, cols = state). Univariate
+  // 1D Gaussian per state with a scalar variance.
+  const kFor = { LONG: null, SHORT: null };
   for (let k = 0; k < result.model.mu.length; k++) kFor[labelOf[k]] = k;
-  const stateOrder = ['LONG', 'CHOP', 'SHORT'];
+  const stateOrder = ['LONG', 'SHORT'];
   const stateData = {};
   for (const s of stateOrder) {
     const k = kFor[s];
-    const S = result.model.Sigma[k];
+    const variance = result.model.Sigma[k][0][0];
     const muRet = result.model.mu[k][0] * featureSd[0] + featureMu[0];
-    const sdRet = Math.sqrt(Math.max(S[0][0], 0)) * featureSd[0];
-    let muVol = null, sdVol = null, corr = null;
-    if (D >= 2) {
-      muVol = result.model.mu[k][1] * featureSd[1] + featureMu[1];
-      sdVol = Math.sqrt(Math.max(S[1][1], 0)) * featureSd[1];
-      const sdSt0 = Math.sqrt(Math.max(S[0][0], 1e-12));
-      const sdSt1 = Math.sqrt(Math.max(S[1][1], 1e-12));
-      corr = S[0][1] / (sdSt0 * sdSt1);
-    }
+    const sdRet = Math.sqrt(Math.max(variance, 0)) * featureSd[0];
     const pStay = result.model.A[k][k];
     stateData[s] = {
       muRet: fmtPct2(muRet),
       sdRet: fmtPct2(sdRet),
-      muVol: muVol == null ? '—' : (muVol * 1e4).toFixed(2),
-      sdVol: sdVol == null ? '—' : (sdVol * 1e4).toFixed(2),
-      corr:  corr  == null ? '—' : corr.toFixed(2),
+      pInit: (result.model.pi[k] * 100).toFixed(2) + '%',
       stick: (1 / Math.max(1e-9, 1 - pStay)).toFixed(1) + ' d',
     };
   }
@@ -1256,12 +1211,10 @@ function renderResults({ rows, featureMu, featureSd, result, useVol, range, rest
       ${stateOrder.map(s => `<th><span class="pill ${s.toLowerCase()}">${s}</span></th>`).join('')}
     </tr>`;
   const metricRows = [
-    ['Mean 1d return',          'muRet'],
-    ['Std of 1d return',        'sdRet'],
-    ['Mean 10d trend-MSE (×10⁴)', 'muVol'],
-    ['Std of 10d trend-MSE (×10⁴)', 'sdVol'],
-    ['Return ↔ vol correlation','corr'],
-    ['Stickiness',              'stick'],
+    ['Mean 1d return',   'muRet'],
+    ['Std of 1d return', 'sdRet'],
+    ['Initial P(state)', 'pInit'],
+    ['Stickiness',       'stick'],
   ];
   document.querySelector('#params-table tbody').innerHTML = metricRows.map(([name, key]) => `
     <tr>
@@ -1269,15 +1222,14 @@ function renderResults({ rows, featureMu, featureSd, result, useVol, range, rest
       ${stateOrder.map(s => `<td class="num">${stateData[s][key]}</td>`).join('')}
     </tr>`).join('');
 
-  // Transition matrix
+  // Transition matrix (2x2)
   const tmIds = {
-    LONG: { LONG: 'tm-LL', SHORT: 'tm-LS', CHOP: 'tm-LC' },
-    SHORT: { LONG: 'tm-SL', SHORT: 'tm-SS', CHOP: 'tm-SC' },
-    CHOP: { LONG: 'tm-CL', SHORT: 'tm-CS', CHOP: 'tm-CC' },
+    LONG:  { LONG: 'tm-LL', SHORT: 'tm-LS' },
+    SHORT: { LONG: 'tm-SL', SHORT: 'tm-SS' },
   };
-  for (const from of ['LONG','SHORT','CHOP']) {
+  for (const from of ['LONG','SHORT']) {
     const i = kFor[from];
-    for (const to of ['LONG','SHORT','CHOP']) {
+    for (const to of ['LONG','SHORT']) {
       const j = kFor[to];
       const v = result.model.A[i][j];
       const el = document.getElementById(tmIds[from][to]);
@@ -1302,7 +1254,7 @@ function renderResults({ rows, featureMu, featureSd, result, useVol, range, rest
   });
   document.getElementById('training-log').textContent = lines.join('\n');
   document.getElementById('training-summary').textContent =
-    `Range: ${range} · ${T} bars · features: ${useVol ? '1d return + 10d trend-MSE' : '1d return only'} · full covariance · no transition prior · no min-run · Viterbi decode · ${restarts} restart(s) · best log-likelihood ${result.logLik.toFixed(3)}`;
+    `Range: ${range} · ${T} bars · 2 states · univariate 1d return · no transition prior · no min-run · Viterbi decode · ${restarts} restart(s) · best log-likelihood ${result.logLik.toFixed(3)}`;
 
   TRAINED = { rows, probByLabel, states, filteredByLabel };
   runAndRenderBacktest();
@@ -1311,7 +1263,10 @@ function renderResults({ rows, featureMu, featureSd, result, useVol, range, rest
 // =====================================================================
 // Backtest engine
 // =====================================================================
-// Per-bar rule: hold TQQQ on LONG, SQQQ on SHORT, cash on CHOP.
+// Per-bar rule: hold the configured LONG instrument when filtered P(LONG)
+// clears threshold, SQQQ when filtered P(SHORT) clears threshold, cash
+// otherwise. With K=2 the model itself only labels LONG or SHORT — the
+// "cash" outcome only happens when neither side has confidence > threshold.
 // Exit and (if applicable) re-enter on any regime change, executed at
 // today's close. Allocation% of total portfolio is sized into the new
 // instrument; the rest stays in cash for the duration of that position.
@@ -1535,16 +1490,14 @@ function renderBacktestChart(equity, buyHold) {
 }
 
 // Derive causal trading labels from filtered probabilities + threshold.
-// argmax-with-threshold: take whichever state's filtered probability is
-// highest AND above threshold; otherwise sit in CHOP (cash).
+// Two states only — pick whichever has higher filtered probability if it
+// also clears the threshold; otherwise sit in cash for that bar.
 function causalLabels(filteredByLabel, threshold) {
   return filteredByLabel.map(p => {
-    let best = 'CHOP', bestP = -1;
-    for (const s of ['LONG', 'SHORT', 'CHOP']) {
-      if (p[s] > bestP) { bestP = p[s]; best = s; }
-    }
-    if (best === 'CHOP') return 'CHOP';
-    return bestP >= threshold ? best : 'CHOP';
+    const longP = p.LONG, shortP = p.SHORT;
+    const best = longP >= shortP ? 'LONG' : 'SHORT';
+    const bestP = Math.max(longP, shortP);
+    return bestP >= threshold ? best : 'CASH';
   });
 }
 
@@ -1650,7 +1603,6 @@ function renderPriceChart(rows, states) {
               return [
                 `Close: $${r.close.toFixed(2)}`,
                 `1d return: ${(r.ret*100).toFixed(2)}%`,
-                `10d trend-MSE: ${(r.volMSE*1e4).toFixed(2)} ×10⁻⁴`,
                 `Regime: ${states[i]}`
               ];
             }
@@ -1696,7 +1648,7 @@ function setChartRange(rangeKey) {
 function renderProbChart(rows, probByLabel) {
   const ctx = document.getElementById('prob-chart');
   if (probChart) probChart.destroy();
-  const datasets = ['LONG', 'CHOP', 'SHORT'].map(s => ({
+  const datasets = ['LONG', 'SHORT'].map(s => ({
     label: s,
     data: rows.map((r, i) => ({ x: r.date, y: probByLabel[i][s] })),
     backgroundColor: hexAlpha(COLORS[s], 0.55),
@@ -1740,10 +1692,8 @@ function renderDataTable(rows, probByLabel, states) {
       <td>${r.date.toISOString().slice(0,10)}</td>
       <td>${r.close.toFixed(2)}</td>
       <td>${(r.ret*100).toFixed(3)}%</td>
-      <td>${(r.volMSE*1e4).toFixed(2)}</td>
       <td>${(p.LONG*100).toFixed(1)}%</td>
       <td>${(p.SHORT*100).toFixed(1)}%</td>
-      <td>${(p.CHOP*100).toFixed(1)}%</td>
       <td><span class="pill ${s.toLowerCase()}">${s}</span></td>
     `;
     tr.dataset.search = (r.date.toISOString().slice(0,10) + ' ' + s).toLowerCase();
@@ -1763,15 +1713,14 @@ document.getElementById('data-filter').addEventListener('input', e => {
 document.getElementById('csv-btn').addEventListener('click', () => {
   if (!TRAINED) return;
   const { rows, probByLabel, states } = TRAINED;
-  const lines = ['date,close,log_return,trend_mse_10d,p_long,p_short,p_chop,regime'];
+  const lines = ['date,close,log_return,p_long,p_short,regime'];
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i], p = probByLabel[i];
     lines.push([
       r.date.toISOString().slice(0,10),
       r.close.toFixed(4),
       r.ret.toFixed(6),
-      r.volMSE.toFixed(8),
-      p.LONG.toFixed(4), p.SHORT.toFixed(4), p.CHOP.toFixed(4),
+      p.LONG.toFixed(4), p.SHORT.toFixed(4),
       states[i]
     ].join(','));
   }
@@ -1827,14 +1776,12 @@ async function run() {
   document.getElementById('error-slot').innerHTML = '';
   document.getElementById('retrain-btn').disabled = true;
   try {
-    const useVol = document.getElementById('ctl-features').value === 'ret_vol';
     const maxIters = Math.max(10, Math.min(500, parseInt(document.getElementById('ctl-iters').value || '80')));
     const restarts = Math.max(1, Math.min(500, parseInt(document.getElementById('ctl-restarts').value || '5')));
     const displayWin = document.getElementById('ctl-display').value;
 
-    const featureLabel = useVol ? '1d return + 10d trend-MSE' : '1d return only';
     document.getElementById('loader-sub').textContent =
-      `3-state regime model · QQQ · ${featureLabel}`;
+      `2-state regime model · QQQ · univariate 1d log return`;
 
     const series = await ensureFullSeries();
     if (!TRAIN_RANGE) initDefaultTrainRange(series);
@@ -1847,7 +1794,7 @@ async function run() {
     setStage('Building features…', 0.06, `${series.length} bars`);
     await new Promise(r => setTimeout(r, 0));
     // Build features on the FULL series once so warmup is consumed at the start
-    const fullFeats = buildFeatures(series, useVol);
+    const fullFeats = buildFeatures(series);
 
     // Slice features by training range
     const trIdx = [];
@@ -1862,7 +1809,7 @@ async function run() {
     setStage('Initializing HMM…', 0.08, `train T=${trainZ.length}  D=${trainZ[0].length}  K=3`);
     await new Promise(r => setTimeout(r, 0));
 
-    const result = await trainAsync(trainZ, { restarts, maxIters, tol: 1e-4, K: 3 },
+    const result = await trainAsync(trainZ, { restarts, maxIters, tol: 1e-4, K: 2 },
       ({pct, detail}) => setStage('EM training (Baum-Welch)…', 0.1 + 0.7 * pct, detail));
 
     // Slice features by display window
@@ -1888,7 +1835,7 @@ async function run() {
 
     renderResults({
       rows: dispRows, featureMu, featureSd, result: dispResult,
-      useVol, range: rangeLabel, restarts,
+      range: rangeLabel, restarts,
     });
     renderTrainSelChart();
     attachTrainSelDrag();
