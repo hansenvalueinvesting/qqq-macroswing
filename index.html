@@ -422,8 +422,8 @@
       <select id="ctl-display">
         <option value="1y">Last 1 year</option>
         <option value="3y">Last 3 years</option>
-        <option value="5y" selected>Last 5 years</option>
-        <option value="10y">Last 10 years</option>
+        <option value="5y">Last 5 years</option>
+        <option value="10y" selected>Last 10 years</option>
         <option value="all">All trained bars</option>
       </select>
     </div>
@@ -1742,12 +1742,13 @@ async function ensureFullSeries() {
 }
 
 function initDefaultTrainRange(series) {
-  // Default: Wang/Lin/Mikhelson (2020) training period — Jan 2007 to Sep 2017,
-  // ~10.7 years, clipped to available data.
+  // Default: 15-year window ending 5 years ago — i.e. [today - 20y, today - 5y].
+  // Captures multiple full regime cycles (sized for modern QQQ vol levels) and
+  // leaves the most recent 5 years available for out-of-sample evaluation.
   const first = series[0].date;
   const last = series[series.length - 1].date;
-  const defStart = parseIso('2007-01-01');
-  const defEnd = parseIso('2017-09-30');
+  const defStart = yearsAgo(last, 20);
+  const defEnd = yearsAgo(last, 5);
   TRAIN_RANGE = {
     start: clampDate(defStart, first, last),
     end:   clampDate(defEnd,   first, last),
