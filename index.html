@@ -472,7 +472,7 @@
       </div>
     </div>
     <div class="note">
-      <strong>What this means.</strong> The label is the model's best guess about today's regime using only data through today (causal forward filter). The probabilities are that same filtered posterior — exactly what the backtest sees when it decides whether to be long, short, or in cash.
+      <strong>What this means.</strong> The label is the model's best guess about which hidden regime QQQ has been in over the past few days. The probabilities are the model's smoothed belief about <em>today's</em> regime given everything it has seen.
     </div>
   </div>
 
@@ -528,12 +528,12 @@
   <div class="chart-wrap tall"><canvas id="price-chart"></canvas></div>
   <div class="chart-hint">scroll · pinch to zoom · drag to pan · hover for per-bar detail</div>
   <div class="note">
-    <strong>Reading the chart.</strong> The line is QQQ adjusted close. Green bands = LONG (Bull), red = SHORT (Bear), unshaded = CASH (neither state clears the backtest confidence threshold). Bands are the causal filtered labels — at each bar only past observations are used, so the picture matches what the backtest actually trades.
+    <strong>Reading the chart.</strong> The line is QQQ adjusted close. Green bands = LONG (Bull), red = SHORT (Bear). The model only ever assigns one of these two states — there is no neutral state. Bands come from the Viterbi path — the single most-likely sequence of hidden states given the observations. The backtest trades these exact same bands.
   </div>
 </div>
 
 <div class="panel full" style="margin-bottom: 20px;">
-  <div class="panel-title">Regime probability ribbon <span class="hint">P(state) per day · causal filtered</span></div>
+  <div class="panel-title">Regime probability ribbon <span class="hint">P(state) per day · smoothed</span></div>
   <div class="chart-wrap short-h"><canvas id="prob-chart"></canvas></div>
   <div class="note">
     <strong>Why this matters.</strong> The hard label flips abruptly, but conviction shifts gradually. When LONG (green) starts losing share to SHORT (red), the model is losing confidence in the bull regime before the hard label flips. This is the model's "soft" view.
@@ -552,10 +552,6 @@
       <div class="ctl">
         <label>Allocation per trade (%)</label>
         <input type="number" id="bt-alloc" value="100" min="0" max="100">
-      </div>
-      <div class="ctl">
-        <label>Min P(state) to trade (%)</label>
-        <input type="number" id="bt-threshold" value="55" min="34" max="90" step="1">
       </div>
     </div>
 
@@ -577,7 +573,7 @@
     <div id="bt-stats" class="bt-stats"></div>
 
     <div class="note">
-      <strong>Rules.</strong> Backtest uses <em>causal/filtered</em> regime probabilities — each bar's label is computed using only data through that bar (no forward-backward smoothing, no future data). Hold the configured <strong>long instrument</strong> when filtered P(LONG) ≥ threshold, <strong>SQQQ</strong> when filtered P(SHORT) ≥ threshold and SHORT is enabled, <strong>cash</strong> otherwise. Allocation % is applied to total portfolio value at each entry. Leveraged ETFs modeled as ±3× the underlying QQQ daily simple return — captures volatility drag, ignores expense ratios and tracking error.
+      <strong>Rules.</strong> Backtest trades the exact Viterbi labels shown as green/red bands on the price chart — hold the configured <strong>long instrument</strong> on LONG bars, hold <strong>SQQQ</strong> on SHORT bars when SHORT is enabled. Allocation % is applied to total portfolio value at each entry. Leveraged ETFs modeled as ±3× the underlying QQQ daily simple return — captures volatility drag, ignores expense ratios and tracking error. Because Viterbi uses the full observation sequence, the backtest is informative as a regime-decoder benchmark, not a live-tradable strategy.
       <br><br>
       <strong>Caveat.</strong> The HMM parameters themselves were trained on the selected training range, so there is still residual parameter look-ahead unless the display window is fully out-of-sample.
     </div>
@@ -621,7 +617,7 @@
     </table>
   </div>
   <div class="note">
-    <strong>Transparency.</strong> 1d return = ln(Close / PrevClose) — the only observation fed to the HMM. P(state) = causal filtered posterior (forward filter only; LONG and SHORT sum to 1.00). Regime = LONG/SHORT when the higher filtered probability clears the backtest threshold, otherwise CASH.
+    <strong>Transparency.</strong> 1d return = ln(Close / PrevClose) — the only observation fed to the HMM. P(state) = smoothed posterior probability from forward-backward (LONG and SHORT sum to 1.00). Regime = Viterbi hard label (no post-hoc smoothing).
   </div>
 </div>
 
@@ -640,7 +636,7 @@
     <p style="margin-bottom: 12px;"><strong>Training.</strong> <strong>Baum-Welch</strong>, an Expectation-Maximization algorithm:
       (E-step) given current parameters, compute the probability of being in each state on each day via the forward-backward algorithm;
       (M-step) re-estimate π, A, μ, σ² using those probabilities as soft assignments. Repeat until log-likelihood stops improving. We do several random initializations and keep the best fit.</p>
-    <p style="margin-bottom: 12px;"><strong>Decoding.</strong> The displayed regime at each bar comes from the <strong>causal forward filter</strong> — the posterior P(state_t | r_1…r_t) using only past observations. The probability ribbon below the chart plots those same filtered probabilities, and the backtest trades them directly with the configured confidence threshold.</p>
+    <p style="margin-bottom: 12px;"><strong>Decoding.</strong> The <strong>Viterbi algorithm</strong> finds the single most likely sequence of regimes (the colored bands on the chart). The probability ribbon below the chart shows the softer per-day posteriors from forward-backward. The backtest trades the Viterbi labels directly.</p>
     <p style="margin-bottom: 12px;"><strong>Labeling.</strong> The two trained states are anonymous numbers; we relabel by mean return — higher mean → LONG (Bull), lower mean → SHORT (Bear) — so colors stay consistent across retrainings.</p>
     <p style="margin-bottom: 12px;"><strong>Training caveat.</strong> Many HMM regime papers retrain the model daily on a rolling window. This is computationally impractical in-browser — we train once on the user-selected training range and apply the trained model to the display window. Expect some parameter look-ahead unless the display window is fully out-of-sample relative to the training range.</p>
     <p><strong>What it is not.</strong> The regime is descriptive — it explains what likely happened, not what will happen next. The most recent label can revise as new bars arrive (the model re-smooths the whole history). This is not investment advice.</p>
@@ -1082,7 +1078,7 @@ function relabel(result, featureMu, featureSd) {
 // =====================================================================
 const COLORS = { LONG: '#5fb878', SHORT: '#d65a5a' };
 // Two states only — LONG and SHORT — shaded green and red.
-const BAND_ALPHA = { LONG: 'rgba(95, 184, 120, 0.22)', SHORT: 'rgba(214, 90, 90, 0.22)', CASH: 'rgba(0,0,0,0)' };
+const BAND_ALPHA = { LONG: 'rgba(95, 184, 120, 0.22)', SHORT: 'rgba(214, 90, 90, 0.22)' };
 
 let priceChart = null, probChart = null, btChart = null, trainSelChart = null;
 let TRAINED = null;
@@ -1147,11 +1143,12 @@ function buildRegimeBands(rows, states) {
 function renderResults({ rows, featureMu, featureSd, result, range, restarts }) {
   const T = rows.length;
   const labelOf = relabel(result, featureMu, featureSd);
-  // Causal filtered posterior per label — only past data per bar. The display
-  // (chart bands, today's signal, probability chart, data table) uses the
-  // same series the backtest trades on, so the picture always matches the
-  // strategy.
-  const filteredByLabel = result.filteredGamma.map(row => {
+  // Chart hard labels: Viterbi path — single most-likely sequence of hidden
+  // states given all observations. No min-run smoothing.
+  const states = result.path.map(k => labelOf[k]);
+  // Smoothed posterior per label — used for the probability ribbon and the
+  // today's-confidence display.
+  const probByLabel = result.gamma.map(row => {
     const o = { LONG: 0, SHORT: 0 };
     for (let k = 0; k < row.length; k++) o[labelOf[k]] = row[k];
     return o;
@@ -1165,6 +1162,19 @@ function renderResults({ rows, featureMu, featureSd, result, range, restarts }) 
   chgEl.textContent = (chgPct >= 0 ? '+' : '') + chgPct.toFixed(2) + '%';
   chgEl.className = 'change ' + (chgPct >= 0 ? 'up' : 'down');
 
+  const today = states[T - 1];
+  const todayP = probByLabel[T - 1];
+  const ss = document.getElementById('signal-state');
+  ss.textContent = today;
+  ss.className = 'signal-state ' + today.toLowerCase();
+  document.getElementById('signal-conf').innerHTML =
+    `Confidence (smoothed posterior): <strong>${fmtPct(todayP[today])}</strong>`;
+  document.getElementById('prob-bars').innerHTML = ['LONG', 'SHORT'].map(s => `
+    <div class="prob-row ${s.toLowerCase()}">
+      <div class="pname">${s}</div>
+      <div class="prob-track"><div class="prob-fill ${s.toLowerCase()}" style="width:${(todayP[s]*100).toFixed(1)}%"></div></div>
+      <div class="pval">${fmtPct(todayP[s])}</div>
+    </div>`).join('');
   document.getElementById('meta-date').textContent = last.date.toISOString().slice(0,10);
   document.getElementById('meta-trained').textContent = new Date().toISOString().slice(11,19) + ' UTC';
   document.getElementById('meta-bars').textContent = String(T);
@@ -1225,6 +1235,10 @@ function renderResults({ rows, featureMu, featureSd, result, range, restarts }) 
     }
   }
 
+  renderPriceChart(rows, states);
+  renderProbChart(rows, probByLabel);
+  renderDataTable(rows, probByLabel, states);
+
   // Training log
   const lines = [];
   lines.push(`[best] restart=${result.restart+1}  iters=${result.iters}  log-likelihood=${result.logLik.toFixed(4)}`);
@@ -1234,40 +1248,18 @@ function renderResults({ rows, featureMu, featureSd, result, range, restarts }) 
   });
   document.getElementById('training-log').textContent = lines.join('\n');
   document.getElementById('training-summary').textContent =
-    `Range: ${range} · ${T} bars · 2 states · univariate 1d return · no transition prior · no min-run · causal filtered decode · ${restarts} restart(s) · best log-likelihood ${result.logLik.toFixed(3)}`;
+    `Range: ${range} · ${T} bars · 2 states · univariate 1d return · no transition prior · no min-run · Viterbi decode · ${restarts} restart(s) · best log-likelihood ${result.logLik.toFixed(3)}`;
 
-  TRAINED = { rows, filteredByLabel };
+  TRAINED = { rows, probByLabel, states };
   runAndRenderBacktest();
-}
-
-// Renders the today/probability panels and the data table for the given
-// tradingStates + filtered posteriors. Threshold-aware so a sub-threshold bar
-// shows as CASH everywhere (chart bands, today's pill, table).
-function renderSignalPanel(rows, filteredByLabel, tradingStates) {
-  const T = rows.length;
-  const today = tradingStates[T - 1];
-  const todayP = filteredByLabel[T - 1];
-  const ss = document.getElementById('signal-state');
-  ss.textContent = today;
-  ss.className = 'signal-state ' + today.toLowerCase();
-  const confSrc = today === 'CASH' ? Math.max(todayP.LONG, todayP.SHORT) : todayP[today];
-  document.getElementById('signal-conf').innerHTML =
-    `Confidence (causal filtered): <strong>${fmtPct(confSrc)}</strong>`;
-  document.getElementById('prob-bars').innerHTML = ['LONG', 'SHORT'].map(s => `
-    <div class="prob-row ${s.toLowerCase()}">
-      <div class="pname">${s}</div>
-      <div class="prob-track"><div class="prob-fill ${s.toLowerCase()}" style="width:${(todayP[s]*100).toFixed(1)}%"></div></div>
-      <div class="pval">${fmtPct(todayP[s])}</div>
-    </div>`).join('');
 }
 
 // =====================================================================
 // Backtest engine
 // =====================================================================
-// Per-bar rule: hold the configured LONG instrument when filtered P(LONG)
-// clears threshold, SQQQ when filtered P(SHORT) clears threshold, cash
-// otherwise. With K=2 the model itself only labels LONG or SHORT — the
-// "cash" outcome only happens when neither side has confidence > threshold.
+// Per-bar rule: hold the configured LONG instrument on LONG-labeled bars,
+// SQQQ on SHORT-labeled bars (when SHORT is enabled). Labels are the same
+// Viterbi states rendered as the green/red bands on the price chart.
 // Exit and (if applicable) re-enter on any regime change, executed at
 // today's close. Allocation% of total portfolio is sized into the new
 // instrument; the rest stays in cash for the duration of that position.
@@ -1490,43 +1482,23 @@ function renderBacktestChart(equity, buyHold) {
   });
 }
 
-// Derive causal trading labels from filtered probabilities + threshold.
-// Two states only — pick whichever has higher filtered probability if it
-// also clears the threshold; otherwise sit in cash for that bar.
-function causalLabels(filteredByLabel, threshold) {
-  return filteredByLabel.map(p => {
-    const longP = p.LONG, shortP = p.SHORT;
-    const best = longP >= shortP ? 'LONG' : 'SHORT';
-    const bestP = Math.max(longP, shortP);
-    return bestP >= threshold ? best : 'CASH';
-  });
-}
-
 function runAndRenderBacktest() {
   if (!TRAINED) return;
   const initial = Math.max(100, parseFloat(document.getElementById('bt-initial').value) || 10000);
   const allocPct = Math.min(100, Math.max(1, parseFloat(document.getElementById('bt-alloc').value) || 100));
-  const thresholdPct = Math.min(90, Math.max(34, parseFloat(document.getElementById('bt-threshold').value) || 55));
   const qqqOn  = document.getElementById('bt-qqq').checked;
   const tqqqOn = document.getElementById('bt-tqqq').checked;
   const longInst = tqqqOn ? 'tqqq' : (qqqOn ? 'qqq' : 'off');
   const tradeShort = document.getElementById('bt-sqqq').checked;
-  const tradingStates = causalLabels(TRAINED.filteredByLabel, thresholdPct / 100);
-  // Keep the chart, today panel, prob chart, and data table in lock-step with
-  // whatever the backtest actually trades.
-  renderSignalPanel(TRAINED.rows, TRAINED.filteredByLabel, tradingStates);
-  renderPriceChart(TRAINED.rows, tradingStates);
-  renderProbChart(TRAINED.rows, TRAINED.filteredByLabel);
-  renderDataTable(TRAINED.rows, TRAINED.filteredByLabel, tradingStates);
-  TRAINED.tradingStates = tradingStates;
-  const result = runBacktest(TRAINED.rows, tradingStates, { initial, allocPct, longInst, tradeShort });
+  // Backtest trades the exact same Viterbi labels rendered on the price chart
+  // so the equity curve corresponds bar-for-bar with the displayed regimes.
+  const result = runBacktest(TRAINED.rows, TRAINED.states, { initial, allocPct, longInst, tradeShort });
   renderBacktestStats(result.stats, initial);
   renderBacktestChart(result.equity, result.buyHold);
 }
 
 document.getElementById('bt-initial').addEventListener('input', runAndRenderBacktest);
 document.getElementById('bt-alloc').addEventListener('input', runAndRenderBacktest);
-document.getElementById('bt-threshold').addEventListener('input', runAndRenderBacktest);
 // QQQ and TQQQ are mutually exclusive on the long side — checking one
 // unchecks the other. SQQQ is independent.
 function bindLongPair(self, other) {
@@ -1720,16 +1692,16 @@ document.getElementById('data-filter').addEventListener('input', e => {
 
 document.getElementById('csv-btn').addEventListener('click', () => {
   if (!TRAINED) return;
-  const { rows, filteredByLabel, tradingStates } = TRAINED;
+  const { rows, probByLabel, states } = TRAINED;
   const lines = ['date,close,log_return,p_long,p_short,regime'];
   for (let i = 0; i < rows.length; i++) {
-    const r = rows[i], p = filteredByLabel[i];
+    const r = rows[i], p = probByLabel[i];
     lines.push([
       r.date.toISOString().slice(0,10),
       r.close.toFixed(4),
       r.ret.toFixed(6),
       p.LONG.toFixed(4), p.SHORT.toFixed(4),
-      tradingStates[i]
+      states[i]
     ].join(','));
   }
   const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
