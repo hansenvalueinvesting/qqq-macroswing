@@ -1269,6 +1269,12 @@ function runBacktest(rows, states, opts) {
   // longInst: 'off' | 'qqq' | 'tqqq'  — instrument used on LONG signals
   const longInst = opts.longInst || 'tqqq';
   const tradeShort = opts.tradeShort !== false;
+  // Years comes from the UI's display window selector ("Last 5 years" → 5);
+  // the daily-bar count T can be smaller than 252×years if the source data
+  // isn't strictly daily, so deriving years from bar count would mis-annualize
+  // CAGR and Sharpe. We use the explicit window length instead.
+  const years = opts.years > 0 ? opts.years
+    : (T > 1 ? (rows[T-1].date - rows[0].date) / (365.25 * 24 * 3600 * 1000) : 0);
 
   // Synthetic normalized price series for each tradable instrument, all
   // starting at 100. QQQ compounds daily return at 1×; TQQQ at 3×; SQQQ at -3×.
@@ -1357,7 +1363,6 @@ function runBacktest(rows, states, opts) {
   // -----------------------------------------------------------------
   const finalValue = equity[T-1].y;
   const totalRet = finalValue / initial - 1;
-  const years = T / 252;
   const cagr = years > 0 ? Math.pow(Math.max(finalValue / initial, 1e-9), 1/years) - 1 : 0;
 
   const bhFinal = buyHold[T-1].y;
@@ -1372,7 +1377,10 @@ function runBacktest(rows, states, opts) {
   for (const r of sR) varS += (r - meanS) ** 2;
   varS /= Math.max(sR.length - 1, 1);
   const sdS = Math.sqrt(varS);
-  const sharpe = sdS > 0 ? (meanS / sdS) * Math.sqrt(252) : 0;
+  // Annualize by the actual sampling frequency of this window (bars per year),
+  // not by sqrt(252). If the data isn't strictly daily, sqrt(252) over-counts.
+  const periodsPerYear = years > 0 ? sR.length / years : 252;
+  const sharpe = sdS > 0 ? (meanS / sdS) * Math.sqrt(periodsPerYear) : 0;
 
   // Buy-and-hold Sharpe for comparison
   const bR = new Array(T - 1);
@@ -1382,7 +1390,7 @@ function runBacktest(rows, states, opts) {
   for (const r of bR) varB += (r - meanB) ** 2;
   varB /= Math.max(bR.length - 1, 1);
   const sdB = Math.sqrt(varB);
-  const bhSharpe = sdB > 0 ? (meanB / sdB) * Math.sqrt(252) : 0;
+  const bhSharpe = sdB > 0 ? (meanB / sdB) * Math.sqrt(periodsPerYear) : 0;
 
   // Max drawdown for both curves
   function maxDD(curve) {
@@ -1490,9 +1498,18 @@ function runAndRenderBacktest() {
   const tqqqOn = document.getElementById('bt-tqqq').checked;
   const longInst = tqqqOn ? 'tqqq' : (qqqOn ? 'qqq' : 'off');
   const tradeShort = document.getElementById('bt-sqqq').checked;
+  // Pull the explicit window length (in years) from the display selector so
+  // CAGR and Sharpe annualize against the actual time span, not against the
+  // daily-bar assumption baked into T/252.
+  const displayWin = document.getElementById('ctl-display').value;
+  const ym = /^(\d+)y$/.exec(displayWin);
+  const years = ym ? parseInt(ym[1]) :
+    (TRAINED.rows.length > 1
+      ? (TRAINED.rows[TRAINED.rows.length - 1].date - TRAINED.rows[0].date) / (365.25 * 24 * 3600 * 1000)
+      : 0);
   // Backtest trades the exact same Viterbi labels rendered on the price chart
   // so the equity curve corresponds bar-for-bar with the displayed regimes.
-  const result = runBacktest(TRAINED.rows, TRAINED.states, { initial, allocPct, longInst, tradeShort });
+  const result = runBacktest(TRAINED.rows, TRAINED.states, { initial, allocPct, longInst, tradeShort, years });
   renderBacktestStats(result.stats, initial);
   renderBacktestChart(result.equity, result.buyHold);
 }
