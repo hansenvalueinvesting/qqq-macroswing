@@ -371,46 +371,60 @@
   }
   .training-log .ll { color: var(--text); }
 
-  .ml-2col {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start;
+  .hmm-diagram { display: flex; flex-direction: column; gap: 20px; }
+  .hmm-states-row { display: flex; align-items: stretch; }
+  .hmm-box {
+    flex: 1; padding: 18px 20px; border: 1px solid;
   }
-  .ml-4col {
-    display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 12px;
+  .hmm-box.long  { border-color: var(--green); background: rgba(95,184,120,0.04); }
+  .hmm-box.short { border-color: var(--red);   background: rgba(214,90,90,0.04); }
+  .hmm-box-name {
+    font-family: 'Fraunces', serif; font-size: 26px; font-weight: 500;
+    letter-spacing: -0.02em; margin-bottom: 14px;
   }
-  @media (max-width: 1100px) { .ml-4col { grid-template-columns: 1fr 1fr; } }
-  @media (max-width: 900px)  { .ml-2col { grid-template-columns: 1fr; } }
-  @media (max-width: 600px)  { .ml-4col { grid-template-columns: 1fr; } }
-  .ml-step {
-    border-top: 1px solid var(--dim); padding: 16px 0;
+  .hmm-box-name.long  { color: var(--green); }
+  .hmm-box-name.short { color: var(--red); }
+  .hmm-box-row {
+    display: flex; justify-content: space-between; align-items: baseline;
+    padding: 4px 0; font-size: 12px; gap: 12px;
   }
-  .ml-step:first-child { border-top: none; padding-top: 0; }
-  .ml-num {
-    font-size: 9px; text-transform: uppercase; letter-spacing: 0.25em;
-    color: var(--accent); margin-bottom: 10px;
+  .hmm-box-row .hk { color: var(--muted); font-size: 11px; white-space: nowrap; }
+  .hmm-box-row .hv { color: var(--text); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+  .hmm-box-sep { border-top: 1px solid var(--dim); margin: 10px 0; }
+  .hmm-arrows {
+    flex: 0 0 120px; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 16px; padding: 0 10px;
   }
-  .ml-formula {
-    font-family: 'JetBrains Mono', monospace; font-size: 11px;
-    color: var(--text); background: var(--bg); border: 1px solid var(--dim);
-    padding: 8px 12px; margin: 8px 0; white-space: pre-wrap; line-height: 1.65;
+  .hmm-arrow-r, .hmm-arrow-l {
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
   }
-  .ml-p {
-    font-size: 12px; color: var(--muted); line-height: 1.7; margin-top: 6px;
+  .ha-val { font-size: 14px; color: var(--text); font-variant-numeric: tabular-nums; font-weight: 500; }
+  .ha-sym { font-size: 9px; color: var(--dim); letter-spacing: 0.1em; white-space: nowrap; }
+  .hmm-obs {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    background: var(--panel-2); border: 1px solid var(--border); padding: 16px 20px;
   }
-  .ml-p + .ml-p { margin-top: 6px; }
-  .ml-sub { font-size: 10px; color: var(--text); margin-bottom: 6px; }
-  .ml-out {
-    padding: 12px; background: var(--panel-2); border: 1px solid var(--dim);
+  .hmm-obs-block { display: flex; flex-direction: column; gap: 5px; }
+  .hmm-obs-lbl {
+    font-size: 9px; text-transform: uppercase; letter-spacing: 0.2em; color: var(--muted);
   }
-  .ml-out-title {
-    font-size: 9px; text-transform: uppercase; letter-spacing: 0.2em;
-    color: var(--text); margin-bottom: 8px; padding-bottom: 6px;
-    border-bottom: 1px solid var(--dim);
+  .hmm-obs-val {
+    font-family: 'Fraunces', serif; font-size: 22px; font-weight: 500;
+    font-variant-numeric: tabular-nums; line-height: 1;
   }
-  .ml-long { color: var(--green); }
-  .ml-short { color: var(--red); }
-  .ml-ref { font-size: 11px; color: var(--muted); line-height: 1.7; margin-top: 6px; }
-  .ml-ref + .ml-ref { margin-top: 4px; }
-  .ml-ref em { color: var(--text); font-style: italic; }
+  .hmm-obs-sub { font-size: 10px; color: var(--dim); }
+  .hmm-obs-arr { font-size: 22px; color: var(--dim); flex-shrink: 0; }
+  .hmm-obs-post { flex: 1; min-width: 180px; }
+  .hmm-obs-regime {
+    font-family: 'Fraunces', serif; font-size: 32px; font-weight: 500;
+    letter-spacing: -0.02em; line-height: 1;
+  }
+  .hmm-obs-regime.long  { color: var(--green); }
+  .hmm-obs-regime.short { color: var(--red); }
+  @media (max-width: 700px) {
+    .hmm-states-row { flex-direction: column; }
+    .hmm-arrows { flex-direction: row; flex: 0 0 auto; padding: 12px 0; width: 100%; justify-content: space-around; }
+  }
 
   footer {
     margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--border);
@@ -606,142 +620,71 @@
 </div>
 
 <div class="panel full" style="margin-bottom: 20px;">
-  <div class="panel-title">How this model works <span class="hint">training → decoding → reading the outputs</span></div>
+  <div class="panel-title">Trained model <span class="hint" id="diag-hint">awaiting training…</span></div>
+  <div class="hmm-diagram">
 
-  <!-- 1. Feature -->
-  <div class="ml-step">
-    <div class="ml-num">1 · input</div>
-    <div class="ml-2col">
-      <div>
-        <div class="ml-formula">r_t = ln( Close_t / Close_{t-1} )</div>
-        <p class="ml-p">One number per day: the 1-day log return. Nothing else goes into the model.</p>
+    <div class="hmm-states-row">
+
+      <!-- LONG state -->
+      <div class="hmm-box long">
+        <div class="hmm-box-name long">LONG</div>
+        <div class="hmm-box-row"><span class="hk">π   initial P(state)</span><span class="hv" id="diag-pi-L">—</span></div>
+        <div class="hmm-box-sep"></div>
+        <div class="hmm-box-row"><span class="hk">μ   mean daily return</span><span class="hv" id="diag-mu-L">—</span></div>
+        <div class="hmm-box-row"><span class="hk">σ   daily volatility</span><span class="hv" id="diag-sd-L">—</span></div>
+        <div class="hmm-box-sep"></div>
+        <div class="hmm-box-row"><span class="hk">A_LL  P(LONG → LONG)</span><span class="hv" id="diag-all">—</span></div>
+        <div class="hmm-box-row"><span class="hk">stickiness (1 / (1−A_LL))</span><span class="hv" id="diag-stk-L">—</span></div>
       </div>
-      <p class="ml-p" style="align-self:center;">Bear regimes carry ~70× the return <em>variance</em> of bull regimes. Variance — not mean — is the dominant separator, which is why this single feature is enough. Adding more inputs does not improve BIC on major equity indices (Yuan &amp; Mitra 2019).</p>
+
+      <!-- Transition arrows -->
+      <div class="hmm-arrows">
+        <div class="hmm-arrow-r">
+          <span class="ha-val" id="diag-als">—</span>
+          <span class="ha-sym">A_LS ──────►</span>
+        </div>
+        <div class="hmm-arrow-l">
+          <span class="ha-sym">◄────── A_SL</span>
+          <span class="ha-val" id="diag-asl">—</span>
+        </div>
+      </div>
+
+      <!-- SHORT state -->
+      <div class="hmm-box short">
+        <div class="hmm-box-name short">SHORT</div>
+        <div class="hmm-box-row"><span class="hk">π   initial P(state)</span><span class="hv" id="diag-pi-S">—</span></div>
+        <div class="hmm-box-sep"></div>
+        <div class="hmm-box-row"><span class="hk">μ   mean daily return</span><span class="hv" id="diag-mu-S">—</span></div>
+        <div class="hmm-box-row"><span class="hk">σ   daily volatility</span><span class="hv" id="diag-sd-S">—</span></div>
+        <div class="hmm-box-sep"></div>
+        <div class="hmm-box-row"><span class="hk">A_SS  P(SHORT → SHORT)</span><span class="hv" id="diag-ass">—</span></div>
+        <div class="hmm-box-row"><span class="hk">stickiness (1 / (1−A_SS))</span><span class="hv" id="diag-stk-S">—</span></div>
+      </div>
+
     </div>
-  </div>
 
-  <!-- 2. Structure -->
-  <div class="ml-step">
-    <div class="ml-num">2 · model structure</div>
-    <div class="ml-2col">
-      <div>
-        <p class="ml-p">Three sets of parameters fully describe the HMM:</p>
-        <div class="ml-formula">π   initial state probabilities
-        P(z_1 = k)  for each state k
-
-A   2×2 transition matrix
-        A[i][j] = P( z_t=j | z_{t-1}=i )
-        each row sums to 1
-
-B   emission distributions
-        B_k(r) = N( r ; μ_k , σ²_k )
-        one Gaussian per state</div>
-        <p class="ml-p">States are anonymous after training; we relabel by mean — higher μ → <span class="ml-long">LONG</span>, lower μ → <span class="ml-short">SHORT</span>.</p>
+    <!-- Latest observation → posteriors → Viterbi label -->
+    <div class="hmm-obs">
+      <div class="hmm-obs-block">
+        <div class="hmm-obs-lbl">latest observation  r_T</div>
+        <div class="hmm-obs-val" id="diag-rt">—</div>
+        <div class="hmm-obs-sub">ln( Close_T / Close_{T-1} )</div>
       </div>
-      <div class="ml-formula" style="margin:0; font-size:10.5px;">
-         ╭── A_LL (stay LONG) ──╮
-         │                      ↓
-π ─►  [ LONG ] ──── A_LS ────► [ SHORT ]
-         ↑    ◄──── A_SL ────    │
-         │                      ╰── A_SS (stay SHORT)
-         │                      │
-         ↓                      ↓
-  N(r ; μ_L , σ²_L)    N(r ; μ_S , σ²_S)
-   small variance         large variance
-  (calm, trending)       (volatile, falling)</div>
-    </div>
-  </div>
-
-  <!-- 3. Training -->
-  <div class="ml-step">
-    <div class="ml-num">3 · training — baum-welch EM</div>
-    <div class="ml-2col">
-      <div>
-        <div class="ml-sub">E-step · forward-backward</div>
-        <p class="ml-p">Forward pass — how likely is state k at time t, given returns up to t?</p>
-        <div class="ml-formula">α_1(k) = π_k · B_k(r_1)
-α_t(k) = B_k(r_t) · Σ_j [ α_{t-1}(j) · A_jk ]</div>
-        <p class="ml-p">Backward pass — how likely are all future returns, if state k held at t?</p>
-        <div class="ml-formula">β_T(k) = 1
-β_t(k) = Σ_j [ A_kj · B_j(r_{t+1}) · β_{t+1}(j) ]</div>
-        <p class="ml-p">Combine forward &amp; backward → soft state assignment using the <em>full</em> sequence:</p>
-        <div class="ml-formula">γ_t(k) = α_t(k)·β_t(k) / Σ_j α_t(j)·β_t(j)</div>
-        <p class="ml-p">γ_t(k) is P(state k at t | all returns). This is the smoothed posterior shown in the probability ribbon.</p>
+      <div class="hmm-obs-arr">→</div>
+      <div class="hmm-obs-block hmm-obs-post">
+        <div class="hmm-obs-lbl">smoothed posterior  γ_T(k)  ·  both sum to 1.00</div>
+        <div id="diag-post-bars"></div>
       </div>
-      <div>
-        <div class="ml-sub">M-step · parameter update</div>
-        <p class="ml-p">Re-estimate all parameters using γ as soft weights — more weight where the state was likely active:</p>
-        <div class="ml-formula">π_k  = γ_1(k)
-
-A_jk = Σ_t ξ_t(j,k) / Σ_t γ_t(j)
-  ξ_t(j,k) ∝ α_t(j)·A_jk·B_k(r_{t+1})·β_{t+1}(k)
-
-μ_k  = Σ_t γ_t(k)·r_t  /  Σ_t γ_t(k)
-
-σ²_k = Σ_t γ_t(k)·(r_t−μ_k)²  /  Σ_t γ_t(k)</div>
-        <p class="ml-p">E→M repeats until log-likelihood stops improving:</p>
-        <div class="ml-formula">log L = Σ_t ln Σ_k α_t(k)   ← maximize</div>
-        <p class="ml-p">Multiple random initializations of π, A, μ, σ² are tried; the run with the highest log L is kept. This guards against local optima.</p>
+      <div class="hmm-obs-arr">→</div>
+      <div class="hmm-obs-block">
+        <div class="hmm-obs-lbl">viterbi label  z*_T</div>
+        <div class="hmm-obs-regime" id="diag-regime">—</div>
       </div>
     </div>
+
   </div>
-
-  <!-- 4. Decoding -->
-  <div class="ml-step">
-    <div class="ml-num">4 · decoding</div>
-    <div class="ml-2col">
-      <div>
-        <div class="ml-sub">Viterbi → hard labels (price chart bands)</div>
-        <p class="ml-p">Dynamic programming finds the single most likely hidden-state sequence given all returns:</p>
-        <div class="ml-formula">δ_1(k) = π_k · B_k(r_1)
-δ_t(k) = B_k(r_t) · max_j [ δ_{t-1}(j) · A_jk ]
-
-back-trace t = T…1  →  optimal path  z*₁,…,z*_T</div>
-        <p class="ml-p">z* is the <span class="ml-long">green</span> / <span class="ml-short">red</span> band on the price chart and what the backtest trades. Only one state at a time — no neutral.</p>
-      </div>
-      <div>
-        <div class="ml-sub">Smoothed posteriors → probability ribbon</div>
-        <p class="ml-p">The γ_t(k) values from the E-step give the soft view — how probable each regime is on each day, informed by both past and future observations:</p>
-        <div class="ml-formula">P(LONG  at t) = γ_t(LONG)
-P(SHORT at t) = γ_t(SHORT)
-               ─────────── = 1.00</div>
-        <p class="ml-p">The ribbon shows conviction shifting <em>before</em> the hard Viterbi label flips. Divergence between ribbon and bands is an early signal of a regime transition in progress.</p>
-      </div>
-    </div>
-  </div>
-
-  <!-- 5. Reading the outputs -->
-  <div class="ml-step">
-    <div class="ml-num">5 · reading the outputs</div>
-    <div class="ml-4col">
-      <div class="ml-out">
-        <div class="ml-out-title">Price chart bands</div>
-        <p class="ml-p"><span class="ml-long">Green</span> = LONG · <span class="ml-short">red</span> = SHORT. The Viterbi path z* — one state per bar, no overlap, no neutral zone.</p>
-      </div>
-      <div class="ml-out">
-        <div class="ml-out-title">Probability ribbon</div>
-        <p class="ml-p">γ_t per day. When <span class="ml-long">green</span> shrinks before the band flips, the model is losing bull conviction — a softer early warning.</p>
-      </div>
-      <div class="ml-out">
-        <div class="ml-out-title">Emission params</div>
-        <p class="ml-p">Learned μ and σ per state. A large σ ratio (SHORT / LONG) confirms separation by volatility. Stickiness = 1 / (1 − A_kk) in bars.</p>
-      </div>
-      <div class="ml-out">
-        <div class="ml-out-title">Transition matrix</div>
-        <p class="ml-p">Diagonal = persistence (high → regime lasts). Off-diagonal = daily switching probability. Each row sums to 1.</p>
-      </div>
-    </div>
-  </div>
-
-  <!-- References -->
-  <div class="ml-step" style="padding-bottom:0;">
-    <div class="ml-num">references</div>
-    <p class="ml-ref">Yuan, Z. &amp; Mitra, G. (2019). <em>Stock Market Regime Detection Using Hidden Markov Models.</em> — source for K=2 selection via BIC, univariate log-return feature, and variance-dominance finding on FTSE 100 / Euro Stoxx 50.</p>
-    <p class="ml-ref">Baum, L. et al. (1970). <em>A maximization technique occurring in the statistical analysis of probabilistic functions of Markov chains.</em> Annals of Mathematical Statistics 41(1).</p>
-    <p class="ml-ref">Viterbi, A. (1967). <em>Error bounds for convolutional codes and an asymptotically optimum decoding algorithm.</em> IEEE Transactions on Information Theory 13(2).</p>
-  </div>
-
 </div>
+
 
 <details class="panel full" style="margin-bottom: 20px;">
   <summary class="panel-title" style="border: none; padding: 0; margin: 0;">Training diagnostics ▸</summary>
@@ -1219,6 +1162,56 @@ function relabel(result, featureMu, featureSd) {
 }
 
 // =====================================================================
+// Render — trained model diagram
+// =====================================================================
+function renderModelDiagram({ kFor, stateData, result, rows, todayP, today }) {
+  const L = kFor.LONG, S = kFor.SHORT;
+  const T = rows.length;
+  const last = rows[T - 1], prev = rows[T - 2];
+  const rtPct = Math.log(last.close / prev.close) * 100;
+
+  document.getElementById('diag-hint').textContent =
+    `${T} bars · log L = ${result.logLik.toFixed(2)}`;
+
+  // LONG box
+  document.getElementById('diag-pi-L').textContent  = stateData.LONG.pInit;
+  document.getElementById('diag-mu-L').textContent  = stateData.LONG.muRet + ' / day';
+  document.getElementById('diag-sd-L').textContent  = stateData.LONG.sdRet + ' / day';
+  document.getElementById('diag-all').textContent   = result.model.A[L][L].toFixed(4);
+  document.getElementById('diag-stk-L').textContent = stateData.LONG.stick;
+
+  // SHORT box
+  document.getElementById('diag-pi-S').textContent  = stateData.SHORT.pInit;
+  document.getElementById('diag-mu-S').textContent  = stateData.SHORT.muRet + ' / day';
+  document.getElementById('diag-sd-S').textContent  = stateData.SHORT.sdRet + ' / day';
+  document.getElementById('diag-ass').textContent   = result.model.A[S][S].toFixed(4);
+  document.getElementById('diag-stk-S').textContent = stateData.SHORT.stick;
+
+  // Transition arrows
+  document.getElementById('diag-als').textContent = result.model.A[L][S].toFixed(4);
+  document.getElementById('diag-asl').textContent = result.model.A[S][L].toFixed(4);
+
+  // Latest observation
+  const rtEl = document.getElementById('diag-rt');
+  rtEl.textContent = (rtPct >= 0 ? '+' : '') + rtPct.toFixed(3) + '%';
+  rtEl.style.color = rtPct >= 0 ? 'var(--green)' : 'var(--red)';
+
+  // Posterior bars (reuse .prob-row style)
+  document.getElementById('diag-post-bars').innerHTML =
+    ['LONG', 'SHORT'].map(s => `
+      <div class="prob-row ${s.toLowerCase()}">
+        <div class="pname">${s}</div>
+        <div class="prob-track"><div class="prob-fill ${s.toLowerCase()}" style="width:${(todayP[s]*100).toFixed(1)}%"></div></div>
+        <div class="pval">${fmtPct(todayP[s])}</div>
+      </div>`).join('');
+
+  // Viterbi label
+  const regEl = document.getElementById('diag-regime');
+  regEl.textContent = today;
+  regEl.className = 'hmm-obs-regime ' + today.toLowerCase();
+}
+
+// =====================================================================
 // Render
 // =====================================================================
 const COLORS = { LONG: '#5fb878', SHORT: '#d65a5a' };
@@ -1380,6 +1373,7 @@ function renderResults({ rows, featureMu, featureSd, result, range, restarts }) 
     }
   }
 
+  renderModelDiagram({ kFor, stateData, result, rows, todayP, today });
   renderPriceChart(rows, states);
   renderProbChart(rows, probByLabel);
   renderDataTable(rows, probByLabel, states);
