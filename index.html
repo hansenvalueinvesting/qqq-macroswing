@@ -371,30 +371,46 @@
   }
   .training-log .ll { color: var(--text); }
 
-  .model-logic-grid {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+  .ml-2col {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start;
   }
-  @media (max-width: 900px) { .model-logic-grid { grid-template-columns: 1fr; } }
-  .ml-section {
-    padding: 16px; background: var(--panel-2); border: 1px solid var(--border);
+  .ml-4col {
+    display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 12px;
   }
-  .ml-heading {
-    font-size: 10px; text-transform: uppercase; letter-spacing: 0.2em;
-    color: var(--accent); margin-bottom: 12px; padding-bottom: 8px;
-    border-bottom: 1px solid var(--dim);
+  @media (max-width: 1100px) { .ml-4col { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 900px)  { .ml-2col { grid-template-columns: 1fr; } }
+  @media (max-width: 600px)  { .ml-4col { grid-template-columns: 1fr; } }
+  .ml-step {
+    border-top: 1px solid var(--dim); padding: 16px 0;
+  }
+  .ml-step:first-child { border-top: none; padding-top: 0; }
+  .ml-num {
+    font-size: 9px; text-transform: uppercase; letter-spacing: 0.25em;
+    color: var(--accent); margin-bottom: 10px;
   }
   .ml-formula {
     font-family: 'JetBrains Mono', monospace; font-size: 11px;
     color: var(--text); background: var(--bg); border: 1px solid var(--dim);
-    padding: 8px 12px; margin: 10px 0; white-space: pre-wrap; line-height: 1.6;
+    padding: 8px 12px; margin: 8px 0; white-space: pre-wrap; line-height: 1.65;
   }
-  .ml-section p {
+  .ml-p {
     font-size: 12px; color: var(--muted); line-height: 1.7; margin-top: 6px;
   }
-  .ml-section p + p { margin-top: 8px; }
+  .ml-p + .ml-p { margin-top: 6px; }
+  .ml-sub { font-size: 10px; color: var(--text); margin-bottom: 6px; }
+  .ml-out {
+    padding: 12px; background: var(--panel-2); border: 1px solid var(--dim);
+  }
+  .ml-out-title {
+    font-size: 9px; text-transform: uppercase; letter-spacing: 0.2em;
+    color: var(--text); margin-bottom: 8px; padding-bottom: 6px;
+    border-bottom: 1px solid var(--dim);
+  }
   .ml-long { color: var(--green); }
   .ml-short { color: var(--red); }
-  .ml-em { color: var(--text); font-style: normal; }
+  .ml-ref { font-size: 11px; color: var(--muted); line-height: 1.7; margin-top: 6px; }
+  .ml-ref + .ml-ref { margin-top: 4px; }
+  .ml-ref em { color: var(--text); font-style: italic; }
 
   footer {
     margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--border);
@@ -590,80 +606,141 @@
 </div>
 
 <div class="panel full" style="margin-bottom: 20px;">
-  <div class="panel-title">Model logic <span class="hint">HMM math · parameters · training · decoding</span></div>
-  <div class="model-logic-grid">
+  <div class="panel-title">How this model works <span class="hint">training → decoding → reading the outputs</span></div>
 
-    <div class="ml-section">
-      <div class="ml-heading">The setup</div>
-      <p>The market is modeled as always being in one of two invisible <span class="ml-em">regimes</span> — <span class="ml-long">LONG (bull)</span> or <span class="ml-short">SHORT (bear)</span>. Each regime generates daily returns with its own characteristic mean and variance. We observe the returns; we infer the regime.</p>
-      <p>Three sets of parameters fully define the model:</p>
-      <div class="ml-formula">π  — initial state distribution  (which regime started first)
-A  — 2×2 transition matrix      (how regimes evolve day to day)
-B  — emission distributions     (what returns each regime produces)</div>
+  <!-- 1. Feature -->
+  <div class="ml-step">
+    <div class="ml-num">1 · input</div>
+    <div class="ml-2col">
+      <div>
+        <div class="ml-formula">r_t = ln( Close_t / Close_{t-1} )</div>
+        <p class="ml-p">One number per day: the 1-day log return. Nothing else goes into the model.</p>
+      </div>
+      <p class="ml-p" style="align-self:center;">Bear regimes carry ~70× the return <em>variance</em> of bull regimes. Variance — not mean — is the dominant separator, which is why this single feature is enough. Adding more inputs does not improve BIC on major equity indices (Yuan &amp; Mitra 2019).</p>
     </div>
-
-    <div class="ml-section">
-      <div class="ml-heading">The single observation</div>
-      <p>One number per trading day — the 1-day log return:</p>
-      <div class="ml-formula">r_t = ln( Close_t / Close_{t-1} )</div>
-      <p>No volatility feature, no trend, no smoothing. Yuan &amp; Mitra (2019) tested multi-feature setups on major indices and found that adding features does not beat the univariate log-return on BIC. The dominant bull/bear separator is return <span class="ml-em">variance</span> — bear regimes have roughly 70× the daily-return variance of bull regimes — not the mean.</p>
-    </div>
-
-    <div class="ml-section">
-      <div class="ml-heading">Emission model</div>
-      <p>Each state k emits log-returns from a univariate Gaussian:</p>
-      <div class="ml-formula">B_k(r) = N(r ; μ_k , σ²_k)
-
-       1
-= ————————— · exp( −(r − μ_k)² / 2σ²_k )
-  √(2πσ²_k)</div>
-      <p>Two parameters per state: mean μ_k (average daily return in that regime) and variance σ²_k (spread). The variance difference between states is typically enormous — this is what drives clean separation.</p>
-    </div>
-
-    <div class="ml-section">
-      <div class="ml-heading">Transition matrix</div>
-      <p>A is a 2×2 row-stochastic matrix. Entry A[i][j] is the probability of moving from state i to state j on the next bar:</p>
-      <div class="ml-formula">     → LONG   → SHORT
-LONG  [ A_LL    A_LS  ]   (A_LL + A_LS = 1)
-SHORT [ A_SL    A_SS  ]   (A_SL + A_SS = 1)</div>
-      <p>The diagonal entries (A_LL, A_SS) measure regime <span class="ml-em">persistence</span>. High diagonal = regime tends to last. Stickiness in days = 1 / (1 − A_kk).</p>
-    </div>
-
-    <div class="ml-section">
-      <div class="ml-heading">Training · Baum-Welch (EM)</div>
-      <p><span class="ml-em">E-step — forward pass:</span> compute α_t(k) = P(r₁…r_t, z_t = k) recursively:</p>
-      <div class="ml-formula">α_1(k) = π_k · B_k(r_1)
-α_t(k) = B_k(r_t) · Σ_j [ α_{t-1}(j) · A_jk ]</div>
-      <p><span class="ml-em">E-step — backward pass:</span> β_t(k) = P(r_{t+1}…r_T | z_t = k):</p>
-      <div class="ml-formula">β_T(k) = 1
-β_t(k) = Σ_j [ A_kj · B_j(r_{t+1}) · β_{t+1}(j) ]</div>
-      <p><span class="ml-em">Soft assignments</span> (posterior probability of state k at time t):</p>
-      <div class="ml-formula">γ_t(k) = α_t(k) · β_t(k) / Σ_j [ α_t(j) · β_t(j) ]</div>
-      <p><span class="ml-em">M-step:</span> re-estimate all parameters using γ as weights — π_k = γ_1(k), A_jk ∝ Σ_t ξ_t(j,k), μ_k = Σ_t γ_t(k)·r_t / Σ_t γ_t(k), and similarly σ²_k. Repeat until log-likelihood converges. Multiple random restarts prevent local-optima traps.</p>
-    </div>
-
-    <div class="ml-section">
-      <div class="ml-heading">Decoding · Viterbi</div>
-      <p>Finds the single most likely hidden-state sequence via dynamic programming:</p>
-      <div class="ml-formula">δ_1(k) = π_k · B_k(r_1)
-δ_t(k) = B_k(r_t) · max_j [ δ_{t-1}(j) · A_jk ]</div>
-      <p>Back-trace from T to 1 to recover the optimal path z*₁…z*_T. This sequence is the <span class="ml-long">green</span>/<span class="ml-short">red</span> regime bands on the price chart and is what the backtest trades.</p>
-      <p>The probability ribbon uses the softer γ_t(k) posteriors — showing gradual conviction shifts before the hard label flips.</p>
-    </div>
-
-    <div class="ml-section">
-      <div class="ml-heading">Why K = 2 states</div>
-      <p>Yuan &amp; Mitra tested K = 2, 3, 4 on FTSE 100 and Euro Stoxx 50. AIC picks K = 4 (rewards complexity lightly), but BIC — which penalizes model size more severely — picks K = 2. BIC is the stricter test and the one to trust when sample size is limited.</p>
-      <p>With K = 3, the third state consistently fails to form a clean cluster; it absorbs whichever days don't fit neatly into bull or bear, producing unstable labels. K = 2 eliminates that ambiguity and gives more stable parameter estimates across retrains.</p>
-    </div>
-
-    <div class="ml-section">
-      <div class="ml-heading">Labeling &amp; caveats</div>
-      <p>After training, states are anonymous. We relabel by learned mean return — higher μ → <span class="ml-long">LONG</span>, lower μ → <span class="ml-short">SHORT</span> — so colors stay consistent across retrains regardless of initialization order.</p>
-      <p>The model is trained once on the selected training range, then decoded over the display window. Viterbi uses the full observed sequence, so the backtest measures decoder quality, not live-tradeable performance. The most recent label can revise as new bars arrive — the model re-smooths the entire history each time.</p>
-    </div>
-
   </div>
+
+  <!-- 2. Structure -->
+  <div class="ml-step">
+    <div class="ml-num">2 · model structure</div>
+    <div class="ml-2col">
+      <div>
+        <p class="ml-p">Three sets of parameters fully describe the HMM:</p>
+        <div class="ml-formula">π   initial state probabilities
+        P(z_1 = k)  for each state k
+
+A   2×2 transition matrix
+        A[i][j] = P( z_t=j | z_{t-1}=i )
+        each row sums to 1
+
+B   emission distributions
+        B_k(r) = N( r ; μ_k , σ²_k )
+        one Gaussian per state</div>
+        <p class="ml-p">States are anonymous after training; we relabel by mean — higher μ → <span class="ml-long">LONG</span>, lower μ → <span class="ml-short">SHORT</span>.</p>
+      </div>
+      <div class="ml-formula" style="margin:0; font-size:10.5px;">
+         ╭── A_LL (stay LONG) ──╮
+         │                      ↓
+π ─►  [ LONG ] ──── A_LS ────► [ SHORT ]
+         ↑    ◄──── A_SL ────    │
+         │                      ╰── A_SS (stay SHORT)
+         │                      │
+         ↓                      ↓
+  N(r ; μ_L , σ²_L)    N(r ; μ_S , σ²_S)
+   small variance         large variance
+  (calm, trending)       (volatile, falling)</div>
+    </div>
+  </div>
+
+  <!-- 3. Training -->
+  <div class="ml-step">
+    <div class="ml-num">3 · training — baum-welch EM</div>
+    <div class="ml-2col">
+      <div>
+        <div class="ml-sub">E-step · forward-backward</div>
+        <p class="ml-p">Forward pass — how likely is state k at time t, given returns up to t?</p>
+        <div class="ml-formula">α_1(k) = π_k · B_k(r_1)
+α_t(k) = B_k(r_t) · Σ_j [ α_{t-1}(j) · A_jk ]</div>
+        <p class="ml-p">Backward pass — how likely are all future returns, if state k held at t?</p>
+        <div class="ml-formula">β_T(k) = 1
+β_t(k) = Σ_j [ A_kj · B_j(r_{t+1}) · β_{t+1}(j) ]</div>
+        <p class="ml-p">Combine forward &amp; backward → soft state assignment using the <em>full</em> sequence:</p>
+        <div class="ml-formula">γ_t(k) = α_t(k)·β_t(k) / Σ_j α_t(j)·β_t(j)</div>
+        <p class="ml-p">γ_t(k) is P(state k at t | all returns). This is the smoothed posterior shown in the probability ribbon.</p>
+      </div>
+      <div>
+        <div class="ml-sub">M-step · parameter update</div>
+        <p class="ml-p">Re-estimate all parameters using γ as soft weights — more weight where the state was likely active:</p>
+        <div class="ml-formula">π_k  = γ_1(k)
+
+A_jk = Σ_t ξ_t(j,k) / Σ_t γ_t(j)
+  ξ_t(j,k) ∝ α_t(j)·A_jk·B_k(r_{t+1})·β_{t+1}(k)
+
+μ_k  = Σ_t γ_t(k)·r_t  /  Σ_t γ_t(k)
+
+σ²_k = Σ_t γ_t(k)·(r_t−μ_k)²  /  Σ_t γ_t(k)</div>
+        <p class="ml-p">E→M repeats until log-likelihood stops improving:</p>
+        <div class="ml-formula">log L = Σ_t ln Σ_k α_t(k)   ← maximize</div>
+        <p class="ml-p">Multiple random initializations of π, A, μ, σ² are tried; the run with the highest log L is kept. This guards against local optima.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. Decoding -->
+  <div class="ml-step">
+    <div class="ml-num">4 · decoding</div>
+    <div class="ml-2col">
+      <div>
+        <div class="ml-sub">Viterbi → hard labels (price chart bands)</div>
+        <p class="ml-p">Dynamic programming finds the single most likely hidden-state sequence given all returns:</p>
+        <div class="ml-formula">δ_1(k) = π_k · B_k(r_1)
+δ_t(k) = B_k(r_t) · max_j [ δ_{t-1}(j) · A_jk ]
+
+back-trace t = T…1  →  optimal path  z*₁,…,z*_T</div>
+        <p class="ml-p">z* is the <span class="ml-long">green</span> / <span class="ml-short">red</span> band on the price chart and what the backtest trades. Only one state at a time — no neutral.</p>
+      </div>
+      <div>
+        <div class="ml-sub">Smoothed posteriors → probability ribbon</div>
+        <p class="ml-p">The γ_t(k) values from the E-step give the soft view — how probable each regime is on each day, informed by both past and future observations:</p>
+        <div class="ml-formula">P(LONG  at t) = γ_t(LONG)
+P(SHORT at t) = γ_t(SHORT)
+               ─────────── = 1.00</div>
+        <p class="ml-p">The ribbon shows conviction shifting <em>before</em> the hard Viterbi label flips. Divergence between ribbon and bands is an early signal of a regime transition in progress.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5. Reading the outputs -->
+  <div class="ml-step">
+    <div class="ml-num">5 · reading the outputs</div>
+    <div class="ml-4col">
+      <div class="ml-out">
+        <div class="ml-out-title">Price chart bands</div>
+        <p class="ml-p"><span class="ml-long">Green</span> = LONG · <span class="ml-short">red</span> = SHORT. The Viterbi path z* — one state per bar, no overlap, no neutral zone.</p>
+      </div>
+      <div class="ml-out">
+        <div class="ml-out-title">Probability ribbon</div>
+        <p class="ml-p">γ_t per day. When <span class="ml-long">green</span> shrinks before the band flips, the model is losing bull conviction — a softer early warning.</p>
+      </div>
+      <div class="ml-out">
+        <div class="ml-out-title">Emission params</div>
+        <p class="ml-p">Learned μ and σ per state. A large σ ratio (SHORT / LONG) confirms separation by volatility. Stickiness = 1 / (1 − A_kk) in bars.</p>
+      </div>
+      <div class="ml-out">
+        <div class="ml-out-title">Transition matrix</div>
+        <p class="ml-p">Diagonal = persistence (high → regime lasts). Off-diagonal = daily switching probability. Each row sums to 1.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- References -->
+  <div class="ml-step" style="padding-bottom:0;">
+    <div class="ml-num">references</div>
+    <p class="ml-ref">Yuan, Z. &amp; Mitra, G. (2019). <em>Stock Market Regime Detection Using Hidden Markov Models.</em> — source for K=2 selection via BIC, univariate log-return feature, and variance-dominance finding on FTSE 100 / Euro Stoxx 50.</p>
+    <p class="ml-ref">Baum, L. et al. (1970). <em>A maximization technique occurring in the statistical analysis of probabilistic functions of Markov chains.</em> Annals of Mathematical Statistics 41(1).</p>
+    <p class="ml-ref">Viterbi, A. (1967). <em>Error bounds for convolutional codes and an asymptotically optimum decoding algorithm.</em> IEEE Transactions on Information Theory 13(2).</p>
+  </div>
+
 </div>
 
 <details class="panel full" style="margin-bottom: 20px;">
