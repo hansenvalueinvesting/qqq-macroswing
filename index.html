@@ -371,60 +371,7 @@
   }
   .training-log .ll { color: var(--text); }
 
-  .hmm-diagram { display: flex; flex-direction: column; gap: 20px; }
-  .hmm-states-row { display: flex; align-items: stretch; }
-  .hmm-box {
-    flex: 1; padding: 18px 20px; border: 1px solid;
-  }
-  .hmm-box.long  { border-color: var(--green); background: rgba(95,184,120,0.04); }
-  .hmm-box.short { border-color: var(--red);   background: rgba(214,90,90,0.04); }
-  .hmm-box-name {
-    font-family: 'Fraunces', serif; font-size: 26px; font-weight: 500;
-    letter-spacing: -0.02em; margin-bottom: 14px;
-  }
-  .hmm-box-name.long  { color: var(--green); }
-  .hmm-box-name.short { color: var(--red); }
-  .hmm-box-row {
-    display: flex; justify-content: space-between; align-items: baseline;
-    padding: 4px 0; font-size: 12px; gap: 12px;
-  }
-  .hmm-box-row .hk { color: var(--muted); font-size: 11px; white-space: nowrap; }
-  .hmm-box-row .hv { color: var(--text); font-variant-numeric: tabular-nums; flex-shrink: 0; }
-  .hmm-box-sep { border-top: 1px solid var(--dim); margin: 10px 0; }
-  .hmm-arrows {
-    flex: 0 0 120px; display: flex; flex-direction: column;
-    align-items: center; justify-content: center; gap: 16px; padding: 0 10px;
-  }
-  .hmm-arrow-r, .hmm-arrow-l {
-    display: flex; flex-direction: column; align-items: center; gap: 2px;
-  }
-  .ha-val { font-size: 14px; color: var(--text); font-variant-numeric: tabular-nums; font-weight: 500; }
-  .ha-sym { font-size: 9px; color: var(--dim); letter-spacing: 0.1em; white-space: nowrap; }
-  .hmm-obs {
-    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
-    background: var(--panel-2); border: 1px solid var(--border); padding: 16px 20px;
-  }
-  .hmm-obs-block { display: flex; flex-direction: column; gap: 5px; }
-  .hmm-obs-lbl {
-    font-size: 9px; text-transform: uppercase; letter-spacing: 0.2em; color: var(--muted);
-  }
-  .hmm-obs-val {
-    font-family: 'Fraunces', serif; font-size: 22px; font-weight: 500;
-    font-variant-numeric: tabular-nums; line-height: 1;
-  }
-  .hmm-obs-sub { font-size: 10px; color: var(--dim); }
-  .hmm-obs-arr { font-size: 22px; color: var(--dim); flex-shrink: 0; }
-  .hmm-obs-post { flex: 1; min-width: 180px; }
-  .hmm-obs-regime {
-    font-family: 'Fraunces', serif; font-size: 32px; font-weight: 500;
-    letter-spacing: -0.02em; line-height: 1;
-  }
-  .hmm-obs-regime.long  { color: var(--green); }
-  .hmm-obs-regime.short { color: var(--red); }
-  @media (max-width: 700px) {
-    .hmm-states-row { flex-direction: column; }
-    .hmm-arrows { flex-direction: row; flex: 0 0 auto; padding: 12px 0; width: 100%; justify-content: space-around; }
-  }
+  #hmm-trellis-wrap { width: 100%; overflow-x: auto; background: var(--bg); padding: 4px 0; }
 
   footer {
     margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--border);
@@ -620,69 +567,8 @@
 </div>
 
 <div class="panel full" style="margin-bottom: 20px;">
-  <div class="panel-title">Trained model <span class="hint" id="diag-hint">awaiting training…</span></div>
-  <div class="hmm-diagram">
-
-    <div class="hmm-states-row">
-
-      <!-- LONG state -->
-      <div class="hmm-box long">
-        <div class="hmm-box-name long">LONG</div>
-        <div class="hmm-box-row"><span class="hk">π   initial P(state)</span><span class="hv" id="diag-pi-L">—</span></div>
-        <div class="hmm-box-sep"></div>
-        <div class="hmm-box-row"><span class="hk">μ   mean daily return</span><span class="hv" id="diag-mu-L">—</span></div>
-        <div class="hmm-box-row"><span class="hk">σ   daily volatility</span><span class="hv" id="diag-sd-L">—</span></div>
-        <div class="hmm-box-sep"></div>
-        <div class="hmm-box-row"><span class="hk">A_LL  P(LONG → LONG)</span><span class="hv" id="diag-all">—</span></div>
-        <div class="hmm-box-row"><span class="hk">stickiness (1 / (1−A_LL))</span><span class="hv" id="diag-stk-L">—</span></div>
-      </div>
-
-      <!-- Transition arrows -->
-      <div class="hmm-arrows">
-        <div class="hmm-arrow-r">
-          <span class="ha-val" id="diag-als">—</span>
-          <span class="ha-sym">A_LS ──────►</span>
-        </div>
-        <div class="hmm-arrow-l">
-          <span class="ha-sym">◄────── A_SL</span>
-          <span class="ha-val" id="diag-asl">—</span>
-        </div>
-      </div>
-
-      <!-- SHORT state -->
-      <div class="hmm-box short">
-        <div class="hmm-box-name short">SHORT</div>
-        <div class="hmm-box-row"><span class="hk">π   initial P(state)</span><span class="hv" id="diag-pi-S">—</span></div>
-        <div class="hmm-box-sep"></div>
-        <div class="hmm-box-row"><span class="hk">μ   mean daily return</span><span class="hv" id="diag-mu-S">—</span></div>
-        <div class="hmm-box-row"><span class="hk">σ   daily volatility</span><span class="hv" id="diag-sd-S">—</span></div>
-        <div class="hmm-box-sep"></div>
-        <div class="hmm-box-row"><span class="hk">A_SS  P(SHORT → SHORT)</span><span class="hv" id="diag-ass">—</span></div>
-        <div class="hmm-box-row"><span class="hk">stickiness (1 / (1−A_SS))</span><span class="hv" id="diag-stk-S">—</span></div>
-      </div>
-
-    </div>
-
-    <!-- Latest observation → posteriors → Viterbi label -->
-    <div class="hmm-obs">
-      <div class="hmm-obs-block">
-        <div class="hmm-obs-lbl">latest observation  r_T</div>
-        <div class="hmm-obs-val" id="diag-rt">—</div>
-        <div class="hmm-obs-sub">ln( Close_T / Close_{T-1} )</div>
-      </div>
-      <div class="hmm-obs-arr">→</div>
-      <div class="hmm-obs-block hmm-obs-post">
-        <div class="hmm-obs-lbl">smoothed posterior  γ_T(k)  ·  both sum to 1.00</div>
-        <div id="diag-post-bars"></div>
-      </div>
-      <div class="hmm-obs-arr">→</div>
-      <div class="hmm-obs-block">
-        <div class="hmm-obs-lbl">viterbi label  z*_T</div>
-        <div class="hmm-obs-regime" id="diag-regime">—</div>
-      </div>
-    </div>
-
-  </div>
+  <div class="panel-title">Model trellis <span class="hint" id="diag-hint">awaiting training… · showing last N bars · scroll →</span></div>
+  <div id="hmm-trellis-wrap"></div>
 </div>
 
 
@@ -1164,51 +1050,238 @@ function relabel(result, featureMu, featureSd) {
 // =====================================================================
 // Render — trained model diagram
 // =====================================================================
-function renderModelDiagram({ kFor, stateData, result, rows, todayP, today }) {
+function renderTrellis({ rows, result, kFor, stateData, labelOf }) {
+  const wrap = document.getElementById('hmm-trellis-wrap');
+  if (!wrap) return;
+
+  const A = result.model.A;
   const L = kFor.LONG, S = kFor.SHORT;
   const T = rows.length;
-  const last = rows[T - 1], prev = rows[T - 2];
-  const rtPct = Math.log(last.close / prev.close) * 100;
+
+  // Last N bars — need prev bar for each r_t, so slice N+1
+  const N = Math.min(10, T - 1);
+  const si = T - N - 1;
+  const barsAll = rows.slice(si);        // N+1 bars
+  const gammas  = result.gamma.slice(si + 1); // N gamma rows
+  const pathArr = result.path.slice(si + 1);  // N viterbi indices
+  const bars    = barsAll.slice(1);       // N display bars
+  const rts     = bars.map((b, i) => Math.log(b.close / barsAll[i].close) * 100);
 
   document.getElementById('diag-hint').textContent =
-    `${T} bars · log L = ${result.logLik.toFixed(2)}`;
+    `${T} bars trained · log L = ${result.logLik.toFixed(2)} · showing last ${N} bars · scroll →`;
 
-  // LONG box
-  document.getElementById('diag-pi-L').textContent  = stateData.LONG.pInit;
-  document.getElementById('diag-mu-L').textContent  = stateData.LONG.muRet + ' / day';
-  document.getElementById('diag-sd-L').textContent  = stateData.LONG.sdRet + ' / day';
-  document.getElementById('diag-all').textContent   = result.model.A[L][L].toFixed(4);
-  document.getElementById('diag-stk-L').textContent = stateData.LONG.stick;
+  // ---- Layout constants ----
+  const PW   = 160;   // left parameter panel width
+  const PIW  = 62;    // π column width
+  const CW   = 116;   // per-bar column width
+  const NW   = 100;   // state node width
+  const NH   = 76;    // state node height
+  const OW   = 100;   // obs node width
+  const OH   = 44;    // obs node height
+  const GMID = 66;    // vertical gap between LONG row bottom and SHORT row top (space for diagonal arrows)
 
-  // SHORT box
-  document.getElementById('diag-pi-S').textContent  = stateData.SHORT.pInit;
-  document.getElementById('diag-mu-S').textContent  = stateData.SHORT.muRet + ' / day';
-  document.getElementById('diag-sd-S').textContent  = stateData.SHORT.sdRet + ' / day';
-  document.getElementById('diag-ass').textContent   = result.model.A[S][S].toFixed(4);
-  document.getElementById('diag-stk-S').textContent = stateData.SHORT.stick;
+  const RY = {
+    date:  16,
+    LONG:  34,
+    get SHORT() { return this.LONG + NH + GMID; },
+    get obs()   { return this.SHORT + NH + 28; },
+  };
+  const SVG_H = RY.obs + OH + 52;
+  const SVG_W = PW + PIW + N * CW + 16;
 
-  // Transition arrows
-  document.getElementById('diag-als').textContent = result.model.A[L][S].toFixed(4);
-  document.getElementById('diag-asl').textContent = result.model.A[S][L].toFixed(4);
+  const G  = '#5fb878', R  = '#d65a5a';
+  const GO = '#d4a04a', TX = '#e8e6e1';
+  const MU = '#6b6862', DM = '#3a3835';
 
-  // Latest observation
-  const rtEl = document.getElementById('diag-rt');
-  rtEl.textContent = (rtPct >= 0 ? '+' : '') + rtPct.toFixed(3) + '%';
-  rtEl.style.color = rtPct >= 0 ? 'var(--green)' : 'var(--red)';
+  const cx = (i) => PW + PIW + i * CW + CW / 2; // bar column center x
 
-  // Posterior bars (reuse .prob-row style)
-  document.getElementById('diag-post-bars').innerHTML =
-    ['LONG', 'SHORT'].map(s => `
-      <div class="prob-row ${s.toLowerCase()}">
-        <div class="pname">${s}</div>
-        <div class="prob-track"><div class="prob-fill ${s.toLowerCase()}" style="width:${(todayP[s]*100).toFixed(1)}%"></div></div>
-        <div class="pval">${fmtPct(todayP[s])}</div>
-      </div>`).join('');
+  // ---- SVG DOM helpers ----
+  const ns = 'http://www.w3.org/2000/svg';
+  function mk(tag, attrs, text) {
+    const el = document.createElementNS(ns, tag);
+    for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, String(v));
+    if (text !== undefined) el.textContent = text;
+    return el;
+  }
+  function line(x1, y1, x2, y2, a)  { return mk('line',  { x1, y1, x2, y2, ...a }); }
+  function rect(x, y, w, h, a)      { return mk('rect',  { x, y, width: w, height: h, ...a }); }
+  function text(x, y, t, a)         { return mk('text',  { x, y, ...a }, t); }
+  function textC(x, y, t, a)        { return text(x, y, t, { 'text-anchor': 'middle', ...a }); }
 
-  // Viterbi label
-  const regEl = document.getElementById('diag-regime');
-  regEl.textContent = today;
-  regEl.className = 'hmm-obs-regime ' + today.toLowerCase();
+  const MON = 'JetBrains Mono,monospace';
+  const SER = 'Fraunces,serif';
+
+  const svg = mk('svg', { viewBox: `0 0 ${SVG_W} ${SVG_H}`, width: SVG_W, height: SVG_H });
+
+  // ---- Arrowhead markers ----
+  const defs = mk('defs', {});
+  function mkMark(id, col) {
+    const m = mk('marker', { id, markerWidth: 7, markerHeight: 5, refX: 6, refY: 2.5, orient: 'auto' });
+    m.appendChild(mk('polygon', { points: '0 0, 7 2.5, 0 5', fill: col }));
+    defs.appendChild(m);
+  }
+  mkMark('mh',  DM); mkMark('mhl', G); mkMark('mhs', R); mkMark('mhg', GO);
+  svg.appendChild(defs);
+
+  // ---- LEFT PARAMETER PANEL ----
+  const paramRows = [
+    [G, 'LONG',  RY.LONG,  [
+      ['π  initial',   stateData.LONG.pInit],
+      ['μ  mean/day',  stateData.LONG.muRet],
+      ['σ  vol/day',   stateData.LONG.sdRet],
+      ['A_LL  stay',   A[L][L].toFixed(4)],
+      ['A_LS  switch', A[L][S].toFixed(4)],
+    ]],
+    [R, 'SHORT', RY.SHORT, [
+      ['π  initial',   stateData.SHORT.pInit],
+      ['μ  mean/day',  stateData.SHORT.muRet],
+      ['σ  vol/day',   stateData.SHORT.sdRet],
+      ['A_SS  stay',   A[S][S].toFixed(4)],
+      ['A_SL  switch', A[S][L].toFixed(4)],
+    ]],
+  ];
+  for (const [col, name, rowY, prows] of paramRows) {
+    const midY = rowY + NH / 2;
+    svg.appendChild(text(6, midY - 22, name, { 'font-family': SER, 'font-size': 15, fill: col, 'font-weight': 500 }));
+    prows.forEach(([k, v], i) => {
+      svg.appendChild(text(6,      midY - 4 + i * 14, k, { 'font-family': MON, 'font-size': 8.5, fill: MU }));
+      svg.appendChild(text(PW - 5, midY - 4 + i * 14, v, { 'font-family': MON, 'font-size': 8.5, fill: TX, 'text-anchor': 'end' }));
+    });
+  }
+  svg.appendChild(line(PW - 1, RY.date - 4, PW - 1, RY.obs + OH + 6, { stroke: DM, 'stroke-width': 1 }));
+
+  // ---- π COLUMN ----
+  // π values with colored labels
+  for (const [col, label, piVal, rowY] of [
+    [G, 'LONG',  stateData.LONG.pInit,  RY.LONG],
+    [R, 'SHORT', stateData.SHORT.pInit, RY.SHORT],
+  ]) {
+    const midY = rowY + NH / 2;
+    svg.appendChild(textC(PW + PIW / 2, midY - 8,  'π',     { 'font-family': MON, 'font-size': 8, fill: GO }));
+    svg.appendChild(textC(PW + PIW / 2, midY + 5,  label,   { 'font-family': MON, 'font-size': 7.5, fill: col }));
+    svg.appendChild(textC(PW + PIW / 2, midY + 17, piVal,   { 'font-family': MON, 'font-size': 8, fill: col }));
+    // Arrow from π col to first bar node
+    svg.appendChild(line(PW + PIW - 4, midY, cx(0) - NW / 2 - 1, midY,
+      { stroke: GO, 'stroke-width': 1.5, 'marker-end': 'url(#mhg)' }));
+  }
+  svg.appendChild(line(PW + PIW - 1, RY.date - 4, PW + PIW - 1, RY.obs + OH + 6, { stroke: DM, 'stroke-width': 0.5, 'stroke-dasharray': '3,3' }));
+
+  // ---- DASHED EMISSION ARROWS (drawn first — behind nodes) ----
+  for (let i = 0; i < N; i++) {
+    const x = cx(i);
+    // LONG → obs (slightly left so both lines are visible)
+    svg.appendChild(line(x - 5, RY.LONG + NH + 1, x - 5, RY.obs - 1,
+      { stroke: G, 'stroke-width': 1, 'stroke-opacity': 0.45,
+        'stroke-dasharray': '3,2.5', 'marker-end': 'url(#mhl)' }));
+    // SHORT → obs
+    svg.appendChild(line(x + 5, RY.SHORT + NH + 1, x + 5, RY.obs - 1,
+      { stroke: R, 'stroke-width': 1, 'stroke-opacity': 0.45,
+        'stroke-dasharray': '3,2.5', 'marker-end': 'url(#mhs)' }));
+  }
+
+  // ---- TRANSITION ARROWS ----
+  for (let i = 0; i < N - 1; i++) {
+    const x1 = cx(i), x2 = cx(i + 1);
+    const vL = labelOf[pathArr[i]], vN = labelOf[pathArr[i + 1]];
+
+    function arrow(y1, y2, aVal, col, mrkId, isVit) {
+      const ax1 = x1 + NW / 2, ax2 = x2 - NW / 2;
+      const op  = isVit ? 1 : 0.17;
+      const sw  = isVit ? 2.5 : 0.7;
+      svg.appendChild(line(ax1, y1, ax2, y2,
+        { stroke: col, 'stroke-width': sw, 'stroke-opacity': op, 'marker-end': `url(#${mrkId})` }));
+      svg.appendChild(textC((ax1 + ax2) / 2, (y1 + y2) / 2 - 3, aVal.toFixed(3),
+        { 'font-family': MON, 'font-size': 7.5, fill: col, opacity: isVit ? 0.95 : 0.2 }));
+    }
+
+    // LONG → LONG (horizontal, at LONG midY)
+    arrow(RY.LONG + NH / 2, RY.LONG + NH / 2,   A[L][L], G, 'mhl', vL === 'LONG'  && vN === 'LONG');
+    // SHORT → SHORT (horizontal, at SHORT midY)
+    arrow(RY.SHORT + NH / 2, RY.SHORT + NH / 2, A[S][S], R, 'mhs', vL === 'SHORT' && vN === 'SHORT');
+    // LONG → SHORT (diagonal down)
+    arrow(RY.LONG + NH * 0.82, RY.SHORT + NH * 0.18, A[L][S], R, 'mhs', vL === 'LONG'  && vN === 'SHORT');
+    // SHORT → LONG (diagonal up)
+    arrow(RY.SHORT + NH * 0.18, RY.LONG + NH * 0.82, A[S][L], G, 'mhl', vL === 'SHORT' && vN === 'LONG');
+  }
+
+  // ---- STATE NODES + OBSERVATION NODES ----
+  for (let i = 0; i < N; i++) {
+    const x = cx(i);
+    const longG  = gammas[i][L];
+    const shortG = gammas[i][S];
+    const vitLbl = labelOf[pathArr[i]];
+    const rt     = rts[i];
+    const dateStr = bars[i].date.toISOString().slice(5, 10);
+
+    // Date label
+    svg.appendChild(textC(x, RY.date, dateStr, { 'font-family': MON, 'font-size': 8, fill: MU }));
+
+    // Draw one state node
+    function stateNode(col, label, rowY, gamma, isVit) {
+      const fillA = (0.05 + 0.3 * gamma).toFixed(2);
+      const rgb   = label === 'LONG' ? '95,184,120' : '214,90,90';
+      svg.appendChild(rect(x - NW / 2, rowY, NW, NH, {
+        fill: `rgba(${rgb},${fillA})`,
+        stroke: col, 'stroke-width': isVit ? 2 : 0.75, 'stroke-opacity': isVit ? 1 : 0.35,
+      }));
+      svg.appendChild(textC(x, rowY + 19, label,
+        { 'font-family': SER, 'font-size': 13, fill: col, 'font-weight': 500, opacity: isVit ? 1 : 0.5 }));
+      svg.appendChild(textC(x, rowY + 34, `γ = ${(gamma * 100).toFixed(1)}%`,
+        { 'font-family': MON, 'font-size': 8.5, fill: TX, opacity: isVit ? 1 : 0.55 }));
+      if (isVit) {
+        svg.appendChild(textC(x, rowY + 50, 'z* Viterbi',
+          { 'font-family': MON, 'font-size': 7.5, fill: GO }));
+      }
+      svg.appendChild(textC(x, rowY + 63,
+        label === 'LONG' ? `μ=${stateData.LONG.muRet}  σ=${stateData.LONG.sdRet}` :
+                           `μ=${stateData.SHORT.muRet}  σ=${stateData.SHORT.sdRet}`,
+        { 'font-family': MON, 'font-size': 6.5, fill: MU, opacity: 0.7 }));
+    }
+
+    stateNode(G, 'LONG',  RY.LONG,  longG,  vitLbl === 'LONG');
+    stateNode(R, 'SHORT', RY.SHORT, shortG, vitLbl === 'SHORT');
+
+    // Observation node
+    const rtCol = rt >= 0 ? G : R;
+    const rtRGB = rt >= 0 ? '95,184,120' : '214,90,90';
+    svg.appendChild(rect(x - OW / 2, RY.obs, OW, OH, {
+      fill: `rgba(${rtRGB},0.07)`, stroke: DM, 'stroke-width': 0.75,
+    }));
+    svg.appendChild(textC(x, RY.obs + 13, 'r_t = ln(C_t/C_{t−1})',
+      { 'font-family': MON, 'font-size': 7, fill: MU }));
+    svg.appendChild(textC(x, RY.obs + 31, (rt >= 0 ? '+' : '') + rt.toFixed(2) + '%',
+      { 'font-family': MON, 'font-size': 12, fill: rtCol, 'font-weight': 500 }));
+  }
+
+  // ---- ROW LAYER LABELS (left edge of trellis) ----
+  const lblX = PW + PIW + 3;
+  svg.appendChild(text(lblX, RY.LONG - 3,  'HIDDEN STATES  z_t',  { 'font-family': MON, 'font-size': 7, fill: MU, opacity: 0.55 }));
+  svg.appendChild(text(lblX, RY.obs - 5,   'OBSERVATIONS  r_t',   { 'font-family': MON, 'font-size': 7, fill: MU, opacity: 0.55 }));
+
+  // ---- LEGEND ----
+  const legY = RY.obs + OH + 26;
+  const legX = PW + PIW;
+  const legItems = [
+    { col: G,  sw: 2.5, dash: '',      lbl: 'Viterbi path z* — LONG' },
+    { col: R,  sw: 2.5, dash: '',      lbl: 'Viterbi path z* — SHORT' },
+    { col: G,  sw: 1,   dash: '3,2.5', lbl: 'emission B_L(r_t) from LONG' },
+    { col: R,  sw: 1,   dash: '3,2.5', lbl: 'emission B_S(r_t) from SHORT' },
+    { col: DM, sw: 0.7, dash: '',      lbl: 'non-Viterbi transition (dimmed)' },
+  ];
+  let lx = legX;
+  for (const { col, sw, dash, lbl } of legItems) {
+    const lineAttrs = { stroke: col, 'stroke-width': sw };
+    if (dash) lineAttrs['stroke-dasharray'] = dash;
+    svg.appendChild(line(lx, legY - 3, lx + 22, legY - 3, lineAttrs));
+    svg.appendChild(mk('polygon', { points: `${lx+22},${legY-3-3} ${lx+28},${legY-3} ${lx+22},${legY-3+3}`, fill: col }));
+    svg.appendChild(text(lx + 32, legY, lbl, { 'font-family': MON, 'font-size': 8, fill: MU }));
+    lx += 32 + lbl.length * 5.6 + 18;
+  }
+  svg.appendChild(text(lx, legY, 'γ = smoothed P(state | all r)',
+    { 'font-family': MON, 'font-size': 8, fill: TX }));
+
+  wrap.innerHTML = '';
+  wrap.appendChild(svg);
 }
 
 // =====================================================================
@@ -1373,7 +1446,7 @@ function renderResults({ rows, featureMu, featureSd, result, range, restarts }) 
     }
   }
 
-  renderModelDiagram({ kFor, stateData, result, rows, todayP, today });
+  renderTrellis({ rows, result, kFor, stateData, labelOf });
   renderPriceChart(rows, states);
   renderProbChart(rows, probByLabel);
   renderDataTable(rows, probByLabel, states);
