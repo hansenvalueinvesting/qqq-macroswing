@@ -371,6 +371,31 @@
   }
   .training-log .ll { color: var(--text); }
 
+  .model-logic-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+  }
+  @media (max-width: 900px) { .model-logic-grid { grid-template-columns: 1fr; } }
+  .ml-section {
+    padding: 16px; background: var(--panel-2); border: 1px solid var(--border);
+  }
+  .ml-heading {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.2em;
+    color: var(--accent); margin-bottom: 12px; padding-bottom: 8px;
+    border-bottom: 1px solid var(--dim);
+  }
+  .ml-formula {
+    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    color: var(--text); background: var(--bg); border: 1px solid var(--dim);
+    padding: 8px 12px; margin: 10px 0; white-space: pre-wrap; line-height: 1.6;
+  }
+  .ml-section p {
+    font-size: 12px; color: var(--muted); line-height: 1.7; margin-top: 6px;
+  }
+  .ml-section p + p { margin-top: 8px; }
+  .ml-long { color: var(--green); }
+  .ml-short { color: var(--red); }
+  .ml-em { color: var(--text); font-style: normal; }
+
   footer {
     margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--border);
     font-size: 10px; color: var(--muted); text-align: center;
@@ -471,9 +496,6 @@
         <div class="value" id="meta-ll">—</div>
       </div>
     </div>
-    <div class="note">
-      <strong>What this means.</strong> The label is the model's best guess about which hidden regime QQQ has been in over the past few days. The probabilities are the model's smoothed belief about <em>today's</em> regime given everything it has seen.
-    </div>
   </div>
 
   <div class="panel">
@@ -488,9 +510,6 @@
       </thead>
       <tbody></tbody>
     </table>
-    <div class="note">
-      <strong>What's here.</strong> For each hidden state the model learned a univariate Gaussian over the 1-day log return. <strong>Mean</strong> is the average daily return inside that regime; <strong>Std</strong> is the typical daily spread (bear regimes typically have much higher variance than bull regimes — this is the dominant separator). <strong>Initial P(state)</strong> is how likely the chain started in that state. <strong>Stickiness</strong> = expected duration in trading days, 1 / (1 − P(stay)).
-    </div>
   </div>
 
   <div class="panel">
@@ -502,9 +521,6 @@
       <div class="rowlbl">SHORT →</div><div class="cell" id="tm-SL">—</div><div class="cell" id="tm-SS">—</div>
     </div>
     <div class="tm-legend">rows = today · cols = tomorrow · each row sums to 1.00</div>
-    <div class="note">
-      <strong>Reading the matrix.</strong> The diagonal tells you how persistent each regime is — high numbers mean it tends to last, low numbers mean it flips often. Off-diagonals are the chance of switching states on the next bar.
-    </div>
   </div>
 </div>
 
@@ -527,17 +543,11 @@
   </div>
   <div class="chart-wrap tall"><canvas id="price-chart"></canvas></div>
   <div class="chart-hint">scroll · pinch to zoom · drag to pan · hover for per-bar detail</div>
-  <div class="note">
-    <strong>Reading the chart.</strong> The line is QQQ adjusted close. Green bands = LONG (Bull), red = SHORT (Bear). The model only ever assigns one of these two states — there is no neutral state. Bands come from the Viterbi path — the single most-likely sequence of hidden states given the observations. The backtest trades these exact same bands.
-  </div>
 </div>
 
 <div class="panel full" style="margin-bottom: 20px;">
   <div class="panel-title">Regime probability ribbon <span class="hint">P(state) per day · smoothed</span></div>
   <div class="chart-wrap short-h"><canvas id="prob-chart"></canvas></div>
-  <div class="note">
-    <strong>Why this matters.</strong> The hard label flips abruptly, but conviction shifts gradually. When LONG (green) starts losing share to SHORT (red), the model is losing confidence in the bull regime before the hard label flips. This is the model's "soft" view.
-  </div>
 </div>
 
 <!-- Backtest engine -->
@@ -571,20 +581,88 @@
     </div>
 
     <div id="bt-stats" class="bt-stats"></div>
-
-    <div class="note">
-      <strong>Rules.</strong> Backtest trades the exact Viterbi labels shown as green/red bands on the price chart — hold the configured <strong>long instrument</strong> on LONG bars, hold <strong>SQQQ</strong> on SHORT bars when SHORT is enabled. Allocation % is applied to total portfolio value at each entry. Leveraged-ETF returns are taken from real adjusted-close history for TQQQ/SQQQ (so expense ratio, tracking error, and path-dependent drag are baked in); bars before Feb 2010 inception fall back to synthetic ±3× compounding off QQQ. Because Viterbi uses the full observation sequence, the backtest is informative as a regime-decoder benchmark, not a live-tradable strategy.
-      <br><br>
-      <strong>Caveat.</strong> The HMM parameters themselves were trained on the selected training range, so there is still residual parameter look-ahead unless the display window is fully out-of-sample.
-    </div>
   </div>
 
   <div class="panel">
     <div class="panel-title">Strategy vs buy-and-hold <span class="hint">equity curves</span></div>
     <div class="chart-wrap"><canvas id="bt-chart"></canvas></div>
-    <div class="note">
-      Both lines start at your initial portfolio value on the first decoded bar. Gold = HMM strategy equity, gray dashed = buy-and-hold QQQ over the same window.
+  </div>
+</div>
+
+<div class="panel full" style="margin-bottom: 20px;">
+  <div class="panel-title">Model logic <span class="hint">HMM math · parameters · training · decoding</span></div>
+  <div class="model-logic-grid">
+
+    <div class="ml-section">
+      <div class="ml-heading">The setup</div>
+      <p>The market is modeled as always being in one of two invisible <span class="ml-em">regimes</span> — <span class="ml-long">LONG (bull)</span> or <span class="ml-short">SHORT (bear)</span>. Each regime generates daily returns with its own characteristic mean and variance. We observe the returns; we infer the regime.</p>
+      <p>Three sets of parameters fully define the model:</p>
+      <div class="ml-formula">π  — initial state distribution  (which regime started first)
+A  — 2×2 transition matrix      (how regimes evolve day to day)
+B  — emission distributions     (what returns each regime produces)</div>
     </div>
+
+    <div class="ml-section">
+      <div class="ml-heading">The single observation</div>
+      <p>One number per trading day — the 1-day log return:</p>
+      <div class="ml-formula">r_t = ln( Close_t / Close_{t-1} )</div>
+      <p>No volatility feature, no trend, no smoothing. Yuan &amp; Mitra (2019) tested multi-feature setups on major indices and found that adding features does not beat the univariate log-return on BIC. The dominant bull/bear separator is return <span class="ml-em">variance</span> — bear regimes have roughly 70× the daily-return variance of bull regimes — not the mean.</p>
+    </div>
+
+    <div class="ml-section">
+      <div class="ml-heading">Emission model</div>
+      <p>Each state k emits log-returns from a univariate Gaussian:</p>
+      <div class="ml-formula">B_k(r) = N(r ; μ_k , σ²_k)
+
+       1
+= ————————— · exp( −(r − μ_k)² / 2σ²_k )
+  √(2πσ²_k)</div>
+      <p>Two parameters per state: mean μ_k (average daily return in that regime) and variance σ²_k (spread). The variance difference between states is typically enormous — this is what drives clean separation.</p>
+    </div>
+
+    <div class="ml-section">
+      <div class="ml-heading">Transition matrix</div>
+      <p>A is a 2×2 row-stochastic matrix. Entry A[i][j] is the probability of moving from state i to state j on the next bar:</p>
+      <div class="ml-formula">     → LONG   → SHORT
+LONG  [ A_LL    A_LS  ]   (A_LL + A_LS = 1)
+SHORT [ A_SL    A_SS  ]   (A_SL + A_SS = 1)</div>
+      <p>The diagonal entries (A_LL, A_SS) measure regime <span class="ml-em">persistence</span>. High diagonal = regime tends to last. Stickiness in days = 1 / (1 − A_kk).</p>
+    </div>
+
+    <div class="ml-section">
+      <div class="ml-heading">Training · Baum-Welch (EM)</div>
+      <p><span class="ml-em">E-step — forward pass:</span> compute α_t(k) = P(r₁…r_t, z_t = k) recursively:</p>
+      <div class="ml-formula">α_1(k) = π_k · B_k(r_1)
+α_t(k) = B_k(r_t) · Σ_j [ α_{t-1}(j) · A_jk ]</div>
+      <p><span class="ml-em">E-step — backward pass:</span> β_t(k) = P(r_{t+1}…r_T | z_t = k):</p>
+      <div class="ml-formula">β_T(k) = 1
+β_t(k) = Σ_j [ A_kj · B_j(r_{t+1}) · β_{t+1}(j) ]</div>
+      <p><span class="ml-em">Soft assignments</span> (posterior probability of state k at time t):</p>
+      <div class="ml-formula">γ_t(k) = α_t(k) · β_t(k) / Σ_j [ α_t(j) · β_t(j) ]</div>
+      <p><span class="ml-em">M-step:</span> re-estimate all parameters using γ as weights — π_k = γ_1(k), A_jk ∝ Σ_t ξ_t(j,k), μ_k = Σ_t γ_t(k)·r_t / Σ_t γ_t(k), and similarly σ²_k. Repeat until log-likelihood converges. Multiple random restarts prevent local-optima traps.</p>
+    </div>
+
+    <div class="ml-section">
+      <div class="ml-heading">Decoding · Viterbi</div>
+      <p>Finds the single most likely hidden-state sequence via dynamic programming:</p>
+      <div class="ml-formula">δ_1(k) = π_k · B_k(r_1)
+δ_t(k) = B_k(r_t) · max_j [ δ_{t-1}(j) · A_jk ]</div>
+      <p>Back-trace from T to 1 to recover the optimal path z*₁…z*_T. This sequence is the <span class="ml-long">green</span>/<span class="ml-short">red</span> regime bands on the price chart and is what the backtest trades.</p>
+      <p>The probability ribbon uses the softer γ_t(k) posteriors — showing gradual conviction shifts before the hard label flips.</p>
+    </div>
+
+    <div class="ml-section">
+      <div class="ml-heading">Why K = 2 states</div>
+      <p>Yuan &amp; Mitra tested K = 2, 3, 4 on FTSE 100 and Euro Stoxx 50. AIC picks K = 4 (rewards complexity lightly), but BIC — which penalizes model size more severely — picks K = 2. BIC is the stricter test and the one to trust when sample size is limited.</p>
+      <p>With K = 3, the third state consistently fails to form a clean cluster; it absorbs whichever days don't fit neatly into bull or bear, producing unstable labels. K = 2 eliminates that ambiguity and gives more stable parameter estimates across retrains.</p>
+    </div>
+
+    <div class="ml-section">
+      <div class="ml-heading">Labeling &amp; caveats</div>
+      <p>After training, states are anonymous. We relabel by learned mean return — higher μ → <span class="ml-long">LONG</span>, lower μ → <span class="ml-short">SHORT</span> — so colors stay consistent across retrains regardless of initialization order.</p>
+      <p>The model is trained once on the selected training range, then decoded over the display window. Viterbi uses the full observed sequence, so the backtest measures decoder quality, not live-tradeable performance. The most recent label can revise as new bars arrive — the model re-smooths the entire history each time.</p>
+    </div>
+
   </div>
 </div>
 
@@ -593,53 +671,27 @@
   <div style="margin-top: 16px;">
     <div id="training-summary" style="font-size: 12px; color: var(--muted); margin-bottom: 12px;"></div>
     <div class="training-log" id="training-log"></div>
-    <div class="note">
-      <strong>What's here.</strong> Each line is one EM (Expectation-Maximization) iteration showing the model's log-likelihood — its "fit score" for explaining the observed data. Higher is better. We try several random starting points (restarts) and keep the best fit, because EM can land in local optima.
-    </div>
   </div>
 </details>
 
-<div class="panel full" style="margin-bottom: 20px;">
-  <div class="panel-title">Per-bar data &amp; inference <span class="hint">every input &amp; output</span></div>
-  <div class="data-controls">
-    <input type="text" id="data-filter" placeholder="Filter by date or state (e.g. 2024 or LONG)">
-    <button class="btn" id="csv-btn">Download CSV</button>
-  </div>
-  <div class="data-scroll">
-    <table id="data-table">
-      <thead>
-        <tr>
-          <th>Date</th><th>Close</th><th>1d return</th>
-          <th>P(LONG)</th><th>P(SHORT)</th><th>Regime</th>
-        </tr>
-      </thead>
-      <tbody></tbody>
-    </table>
-  </div>
-  <div class="note">
-    <strong>Transparency.</strong> 1d return = ln(Close / PrevClose) — the only observation fed to the HMM. P(state) = smoothed posterior probability from forward-backward (LONG and SHORT sum to 1.00). Regime = Viterbi hard label (no post-hoc smoothing).
-  </div>
-</div>
-
 <details class="panel full" style="margin-bottom: 20px;">
-  <summary class="panel-title" style="border: none; padding: 0; margin: 0;">How the model works ▸</summary>
-  <div style="margin-top: 16px; font-size: 12px; line-height: 1.8; color: var(--text);">
-    <p style="margin-bottom: 12px;"><strong>The idea.</strong> A Hidden Markov Model (HMM) assumes the market is always in one of a few invisible "regimes" (here: just <em>Bull</em> / <em>Bear</em>, or LONG / SHORT), and each regime produces daily returns with a characteristic mean and variance. We can't observe the regime directly — only the returns — so we infer it.</p>
-    <p style="margin-bottom: 12px;"><strong>The math, in three pieces.</strong></p>
-    <ol style="margin-left: 20px; margin-bottom: 12px;">
-      <li><strong>Initial probabilities π</strong> — chance the chain starts in each state.</li>
-      <li><strong>Transition matrix A</strong> — 2×2 here, chance of moving from state i to state j between bars.</li>
-      <li><strong>Emission distributions</strong> — each state has a univariate Gaussian over the 1-day log return. Two parameters per state (mean μ, variance σ²) — no other features.</li>
-    </ol>
-    <p style="margin-bottom: 12px;"><strong>The feature.</strong> Single observation per day: <code>r_t = ln(Close_t / Close_{t-1})</code>. No vol feature, no trend-MSE, no smoothing — just raw daily log return. Yuan/Mitra (2019) show on FTSE 100 and Euro Stoxx 50 data that adding more features doesn't beat this on BIC; the dominant signal separating bull from bear is the <em>variance</em> of returns, not their mean (bear regimes have ~70× the daily-return variance of bull regimes in their fit).</p>
-    <p style="margin-bottom: 12px;"><strong>Why 2 states and not 3+.</strong> Yuan/Mitra formally test K=2, 3, 4 with AIC and BIC. AIC picks K=4 (it always rewards complexity less heavily), but BIC — which penalizes complexity more strictly — picks K=2. They go with K=2 because (a) BIC is the stricter test, (b) parameter-estimation error compounds with more states, and (c) the third state in K=3 doesn't carve a clean cluster (their fit comment: "the other two states fit well except state 3"). Our previous K=3 setups echoed this — the CHOP state kept absorbing whichever days didn't fit cleanly. Going to K=2 eliminates that whole problem.</p>
-    <p style="margin-bottom: 12px;"><strong>Training.</strong> <strong>Baum-Welch</strong>, an Expectation-Maximization algorithm:
-      (E-step) given current parameters, compute the probability of being in each state on each day via the forward-backward algorithm;
-      (M-step) re-estimate π, A, μ, σ² using those probabilities as soft assignments. Repeat until log-likelihood stops improving. We do several random initializations and keep the best fit.</p>
-    <p style="margin-bottom: 12px;"><strong>Decoding.</strong> The <strong>Viterbi algorithm</strong> finds the single most likely sequence of regimes (the colored bands on the chart). The probability ribbon below the chart shows the softer per-day posteriors from forward-backward. The backtest trades the Viterbi labels directly.</p>
-    <p style="margin-bottom: 12px;"><strong>Labeling.</strong> The two trained states are anonymous numbers; we relabel by mean return — higher mean → LONG (Bull), lower mean → SHORT (Bear) — so colors stay consistent across retrainings.</p>
-    <p style="margin-bottom: 12px;"><strong>Training caveat.</strong> Many HMM regime papers retrain the model daily on a rolling window. This is computationally impractical in-browser — we train once on the user-selected training range and apply the trained model to the display window. Expect some parameter look-ahead unless the display window is fully out-of-sample relative to the training range.</p>
-    <p><strong>What it is not.</strong> The regime is descriptive — it explains what likely happened, not what will happen next. The most recent label can revise as new bars arrive (the model re-smooths the whole history). This is not investment advice.</p>
+  <summary class="panel-title" style="border: none; padding: 0; margin: 0;">Per-bar data &amp; inference ▸ <span class="hint">every input &amp; output</span></summary>
+  <div style="margin-top: 16px;">
+    <div class="data-controls">
+      <input type="text" id="data-filter" placeholder="Filter by date or state (e.g. 2024 or LONG)">
+      <button class="btn" id="csv-btn">Download CSV</button>
+    </div>
+    <div class="data-scroll">
+      <table id="data-table">
+        <thead>
+          <tr>
+            <th>Date</th><th>Close</th><th>1d return</th>
+            <th>P(LONG)</th><th>P(SHORT)</th><th>Regime</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
   </div>
 </details>
 
