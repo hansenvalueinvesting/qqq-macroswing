@@ -346,10 +346,11 @@
 
   /* Backtest stats grid */
   .bt-stats {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
     margin: 16px 0;
     padding: 14px; background: var(--panel-2); border: 1px solid var(--border);
   }
+  @media (max-width: 600px) { .bt-stats { grid-template-columns: 1fr 1fr; } }
   .bt-stat { display: flex; flex-direction: column; gap: 2px; padding: 4px 2px; }
   .bt-stat .lbl {
     font-size: 9px; color: var(--muted);
@@ -1551,7 +1552,22 @@ function runBacktest(rows, states, opts) {
   const periodsPerYear = years > 0 ? sR.length / years : 252;
   const sharpe = sdS > 0 ? (meanS / sdS) * Math.sqrt(periodsPerYear) : 0;
 
-  // Buy-and-hold Sharpe for comparison
+  // Sortino: downside deviation (target = 0, only penalize negative days)
+  const downsideS = sR.filter(r => r < 0);
+  const downsideVarS = downsideS.length > 0
+    ? downsideS.reduce((a, r) => a + r * r, 0) / downsideS.length : 0;
+  const sortino = downsideVarS > 0 ? (meanS / Math.sqrt(downsideVarS)) * Math.sqrt(periodsPerYear) : 0;
+
+  // CVaR 95%: average return of the worst 5% of daily returns (Expected Shortfall)
+  function cvar95(returns) {
+    if (returns.length === 0) return 0;
+    const sorted = returns.slice().sort((a, b) => a - b);
+    const cutoff = Math.max(1, Math.floor(sorted.length * 0.05));
+    return sorted.slice(0, cutoff).reduce((a, b) => a + b, 0) / cutoff;
+  }
+  const cvarS = cvar95(sR);
+
+  // Buy-and-hold Sharpe, Sortino, CVaR for comparison
   const bR = new Array(T - 1);
   for (let i = 1; i < T; i++) bR[i-1] = buyHold[i].y / buyHold[i-1].y - 1;
   const meanB = bR.reduce((a,b)=>a+b, 0) / Math.max(bR.length, 1);
@@ -1560,6 +1576,11 @@ function runBacktest(rows, states, opts) {
   varB /= Math.max(bR.length - 1, 1);
   const sdB = Math.sqrt(varB);
   const bhSharpe = sdB > 0 ? (meanB / sdB) * Math.sqrt(periodsPerYear) : 0;
+  const downsideB = bR.filter(r => r < 0);
+  const downsideVarB = downsideB.length > 0
+    ? downsideB.reduce((a, r) => a + r * r, 0) / downsideB.length : 0;
+  const bhSortino = downsideVarB > 0 ? (meanB / Math.sqrt(downsideVarB)) * Math.sqrt(periodsPerYear) : 0;
+  const cvarB = cvar95(bR);
 
   // Max drawdown for both curves
   function maxDD(curve) {
@@ -1580,8 +1601,10 @@ function runBacktest(rows, states, opts) {
   return {
     equity, buyHold, trades,
     stats: {
-      finalValue, totalRet, cagr, sharpe, maxDD: ddStrat,
-      bhFinalValue: bhFinal, bhRet, bhCagr, bhSharpe, bhMaxDD: ddBh,
+      finalValue, totalRet, cagr, sharpe, sortino, cvarS, maxDD: ddStrat,
+      bhFinalValue: bhFinal, bhRet, bhCagr, bhSharpe, bhSortino, cvarB, bhMaxDD: ddBh,
+      calmar: ddStrat > 0 ? cagr / ddStrat : 0,
+      bhCalmar: ddBh > 0 ? bhCagr / ddBh : 0,
       numTrades: trades.length, winRate, years,
     },
   };
@@ -1601,7 +1624,13 @@ function renderBacktestStats(s, initial) {
       cls: s.cagr >= 0 ? 'pos' : 'neg' },
     { lbl: 'Sharpe ratio',    val: s.sharpe.toFixed(2),    sub: `B&H ${s.bhSharpe.toFixed(2)}`,
       cls: s.sharpe >= 0 ? 'pos' : 'neg' },
+    { lbl: 'Sortino ratio',   val: s.sortino.toFixed(2),   sub: `B&H ${s.bhSortino.toFixed(2)}`,
+      cls: s.sortino >= 0 ? 'pos' : 'neg' },
+    { lbl: 'Calmar ratio',    val: s.calmar.toFixed(2),    sub: `B&H ${s.bhCalmar.toFixed(2)}`,
+      cls: s.calmar >= 0 ? 'pos' : 'neg' },
     { lbl: 'Max drawdown',    val: fmtPct2(-s.maxDD),      sub: `B&H ${fmtPct2(-s.bhMaxDD)}`,
+      cls: 'neg' },
+    { lbl: 'CVaR 95% (daily)', val: fmtPct2(s.cvarS),      sub: `B&H ${fmtPct2(s.cvarB)}`,
       cls: 'neg' },
     { lbl: 'Trades · Win %',  val: `${s.numTrades} · ${fmtPct(s.winRate)}`,
       sub: `over ${s.years.toFixed(1)}y` },
