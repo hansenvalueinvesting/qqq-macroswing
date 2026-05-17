@@ -378,6 +378,37 @@
     font-size: 10px; color: var(--muted); text-align: center;
     text-transform: uppercase; letter-spacing: 0.15em;
   }
+
+  /* ── Mobile improvements ── */
+  @media (max-width: 600px) {
+    body { padding: 12px; }
+    .header { padding-bottom: 12px; margin-bottom: 16px; }
+    .header-left h1 { font-size: 22px; }
+    .header-right { width: 100%; justify-content: space-between; }
+    .price-block { text-align: left; }
+    .btn { padding: 12px 16px; font-size: 12px; }
+    .panel { padding: 14px; }
+    .hint { display: none; }
+    .chart-hint { display: none; }
+    .signal-state { font-size: 40px; }
+    .chart-wrap { height: 240px; }
+    .chart-wrap.tall { height: 280px; }
+    .chart-wrap.short-h { height: 150px; }
+    .ctl select, .ctl input { padding: 12px 10px; font-size: 14px; }
+    .controls-grid { grid-template-columns: 1fr 1fr !important; }
+    .chart-toolbar .range-btn { padding: 8px 10px; font-size: 11px; }
+    .data-scroll { max-height: 280px; overflow-x: auto; }
+    .data-controls { flex-direction: column; align-items: stretch; }
+    .data-controls input { min-width: unset; }
+    .train-sel-wrap { height: 90px; }
+    .grid { gap: 14px; margin-bottom: 14px; }
+    .grid-top { gap: 14px; margin-bottom: 14px; }
+    .bt-grid { gap: 14px; margin-bottom: 14px; }
+  }
+  @media (max-width: 420px) {
+    .controls-grid { grid-template-columns: 1fr !important; }
+    .chart-toolbar .range-btns { flex-wrap: wrap; }
+  }
 </style>
 </head>
 <body>
@@ -2097,6 +2128,36 @@ function attachTrainSelDrag() {
     if (!DRAGGING) return;
     DRAGGING = null;
     // Run after a release
+    if ((TRAIN_RANGE.end - TRAIN_RANGE.start) > 90 * DAY_MS) run();
+  });
+
+  // Touch equivalents so drag-to-set-range works on mobile
+  canvas.addEventListener('touchstart', e => {
+    if (!trainSelChart) return;
+    e.preventDefault();
+    const first = FULL_SERIES[0].date, last = FULL_SERIES[FULL_SERIES.length - 1].date;
+    const d = clampDate(pxToDate(e.touches[0].clientX), first, last);
+    DRAGGING = { start: d, end: d };
+    TRAIN_RANGE = { start: d, end: new Date(d.getTime() + DAY_MS) };
+    trainSelChart.update('none');
+  }, { passive: false });
+
+  canvas.addEventListener('touchmove', e => {
+    if (!DRAGGING) return;
+    e.preventDefault();
+    const first = FULL_SERIES[0].date, last = FULL_SERIES[FULL_SERIES.length - 1].date;
+    const d = clampDate(pxToDate(e.touches[0].clientX), first, last);
+    DRAGGING.end = d;
+    const a = DRAGGING.start, b = DRAGGING.end;
+    TRAIN_RANGE = { start: a < b ? a : b, end: a < b ? b : a };
+    document.getElementById('ctl-train-start').value = isoDate(TRAIN_RANGE.start);
+    document.getElementById('ctl-train-end').value = isoDate(TRAIN_RANGE.end);
+    trainSelChart.update('none');
+  }, { passive: false });
+
+  canvas.addEventListener('touchend', () => {
+    if (!DRAGGING) return;
+    DRAGGING = null;
     if ((TRAIN_RANGE.end - TRAIN_RANGE.start) > 90 * DAY_MS) run();
   });
 }
