@@ -380,6 +380,14 @@
     text-transform: uppercase; letter-spacing: 0.15em;
   }
 
+  .references {
+    list-style: decimal; padding-left: 20px;
+    font-size: 12px; color: var(--muted); line-height: 1.8;
+  }
+  .references li { margin-bottom: 10px; }
+  .references li:last-child { margin-bottom: 0; }
+  .references em { color: var(--text); font-style: italic; }
+
   /* ── Mobile improvements ── */
   @media (max-width: 600px) {
     body { padding: 12px; }
@@ -632,6 +640,16 @@
     </div>
   </div>
 </details>
+
+<div class="panel full" style="margin-bottom: 20px;">
+  <div class="panel-title">References</div>
+  <ol class="references">
+    <li>Baum, Leonard E., Ted Petrie, George Soules, and Norman Weiss. "A Maximization Technique Occurring in the Statistical Analysis of Probabilistic Functions of Markov Chains." <em>The Annals of Mathematical Statistics</em> 41, no. 1 (1970): 164–171.</li>
+    <li>Viterbi, Andrew J. "Error Bounds for Convolutional Codes and an Asymptotically Optimum Decoding Algorithm." <em>IEEE Transactions on Information Theory</em> 13, no. 2 (1967): 260–269.</li>
+    <li>Wang, Matthew, Yi-Hong Lin, and Ilya Mikhelson. "Regime-Switching Factor Investing with Hidden Markov Models." <em>Journal of Risk and Financial Management</em> 13, no. 12 (2020): 311. <a href="https://doi.org/10.3390/jrfm13120311">https://doi.org/10.3390/jrfm13120311</a>.</li>
+    <li>Yuan, Yuan, and Gautam Mitra. "Market Regime Identification Using Hidden Markov Models." SSRN Working Paper, 2019. <a href="https://ssrn.com/abstract=3406068">https://ssrn.com/abstract=3406068</a>.</li>
+  </ol>
+</div>
 
 <footer>
   <a href="https://github.com/hansenvalueinvesting">hansen zheng</a>, 2026
